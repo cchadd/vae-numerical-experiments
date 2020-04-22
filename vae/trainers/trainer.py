@@ -6,17 +6,18 @@ from .base import BaseTrainer
 
 
 class ModelTrainer(BaseTrainer):
-
-    def __init__(self,
-                 model,
-                 train_loader,
-                 test_loader,
-                 optimizer='adam',
-                 lr=1e-3,
-                 batch_size=100,
-                 n_epochs=15,
-                 seed=1,
-                 verbose=True):
+    def __init__(
+        self,
+        model,
+        train_loader,
+        test_loader,
+        optimizer="adam",
+        lr=1e-3,
+        batch_size=100,
+        n_epochs=15,
+        seed=1,
+        verbose=True,
+    ):
         """
             The ModelTrainer module
             
@@ -49,7 +50,7 @@ class ModelTrainer(BaseTrainer):
         torch.cuda.manual_seed_all(seed)
         random.seed(seed)
         np.random.seed(seed)
-        
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.train_loader = train_loader
@@ -57,7 +58,7 @@ class ModelTrainer(BaseTrainer):
         self.n_epochs = n_epochs
         self.verbose = True
 
-        if optimizer == 'adam':
+        if optimizer == "adam":
             self.optimizer = optim.Adam(model.parameters(), lr=lr)
 
         else:
@@ -76,32 +77,41 @@ class ModelTrainer(BaseTrainer):
             self.optimizer.zero_grad()
             recon_batch, mu, log_var = self.model(data)
             loss = self.model.loss_function(recon_batch, data, mu, log_var)
-    
+
             loss.backward()
             train_loss += loss.item()
             self.optimizer.step()
-    
+
             if batch_idx % 100 == 0 and self.verbose:
-                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                    epoch, batch_idx * len(data), len(self.train_loader.dataset),
-                    100. * batch_idx / len(self.train_loader), loss.item() / len(data)))
-                
+                print(
+                    "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
+                        epoch,
+                        batch_idx * len(data),
+                        len(self.train_loader.dataset),
+                        100.0 * batch_idx / len(self.train_loader),
+                        loss.item() / len(data),
+                    )
+                )
+
         if self.verbose:
-            print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(self.train_loader.dataset)))
-    
+            print(
+                "====> Epoch: {} Average loss: {:.4f}".format(
+                    epoch, train_loss / len(self.train_loader.dataset)
+                )
+            )
 
     def __test_epoch(self):
         self.model.eval()
-        test_loss= 0
+        test_loss = 0
         with torch.no_grad():
             for data, _ in self.test_loader:
                 data = data.to(self.device)
                 recon, mu, log_var = self.model(data)
-        
+
                 # sum up batch loss
                 test_loss += self.model.loss_function(recon, data, mu, log_var).item()
 
         test_loss /= len(self.test_loader.dataset)
 
         if self.verbose:
-            print('====> Test set loss: {:.4f}'.format(test_loss))
+            print("====> Test set loss: {:.4f}".format(test_loss))
