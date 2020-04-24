@@ -5,4 +5,7 @@ data
 
 .vscode
 .ipynb*
+*.ipynb
+
+
 vae_pkg_CCHADD*
