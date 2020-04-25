@@ -75,7 +75,8 @@ class ModelTrainer(BaseTrainer):
         for batch_idx, (data, _) in enumerate(self.train_loader):
             data = data.to(self.device)
             self.optimizer.zero_grad()
-            recon_batch, mu, log_var = self.model(data)
+            print('tes')
+            recon_batch, _, _, mu, log_var = self.model(data)
             loss = self.model.loss_function(recon_batch, data, mu, log_var)
 
             loss.backward()
@@ -106,7 +107,7 @@ class ModelTrainer(BaseTrainer):
         with torch.no_grad():
             for data, _ in self.test_loader:
                 data = data.to(self.device)
-                recon, mu, log_var = self.model(data)
+                recon, _, _, mu, log_var = self.model(data)
 
                 # sum up batch loss
                 test_loss += self.model.loss_function(recon, data, mu, log_var).item()
