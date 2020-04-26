@@ -33,7 +33,8 @@ class VAE(BaseVAE, nn.Module):
         self.latent_dim = latent_dim
         self.normal = torch.distributions.MultivariateNormal(
             loc=torch.zeros(latent_dim),
-            covariance_matrix=torch.eye(latent_dim)
+            covariance_matrix=torch.eye(latent_dim), 
+            device=self.device
         )
 
     def forward(self, x):
