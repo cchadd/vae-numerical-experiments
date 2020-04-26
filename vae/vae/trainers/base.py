@@ -22,7 +22,9 @@ class BaseTrainer(ABC):
                 'log_p_z_given_x',
                 'log_p_x',
                 'log_p_z',
-                'lop_p_xz'
+                'lop_p_xz',
+                'kl_prior',
+                'kl_cond'
             ]
 
             self.train_metrics = {key: [0]*n_epochs for key in self.metrics}
