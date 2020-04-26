@@ -13,9 +13,9 @@ class ModelTrainer(BaseTrainer):
         test_loader,
         optimizer="adam",
         lr=1e-3,
-        batch_size=100,
         n_epochs=15,
         seed=1,
+        record_metrics=True,
         verbose=True,
     ):
         """
@@ -34,29 +34,21 @@ class ModelTrainer(BaseTrainer):
                 - The optimizer's name
             lr (float):
                 - The learning rate to use
-            batch_size (int):
-                - The batch_size for training
             n_epochs (int):
                 - The number of epochs for training
             seed (int):
                 - The random seed to use
+            record_metrics (Bool):
+                - If true the trainer will record all the metrics throughtout training and testing (log-densities, loss, kl_dvg)
             verbose (Bool):
                 - Verbosity
         """
-
-        BaseTrainer.__init__(self, model, train_loader, test_loader, verbose)
+        BaseTrainer.__init__(self, model, n_epochs, train_loader, test_loader, record_metrics,verbose)
 
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         random.seed(seed)
         np.random.seed(seed)
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = model.to(self.device)
-        self.train_loader = train_loader
-        self.test_loader = test_loader
-        self.n_epochs = n_epochs
-        self.verbose = True
 
         if optimizer == "adam":
             self.optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -67,7 +59,7 @@ class ModelTrainer(BaseTrainer):
     def train(self):
         for epoch in range(self.n_epochs):
             self.__train_epoch(epoch)
-            self.__test_epoch()
+            self.__test_epoch(epoch)
 
     def __train_epoch(self, epoch):
         self.model.train()
@@ -75,8 +67,7 @@ class ModelTrainer(BaseTrainer):
         for batch_idx, (data, _) in enumerate(self.train_loader):
             data = data.to(self.device)
             self.optimizer.zero_grad()
-            print('tes')
-            recon_batch, _, _, mu, log_var = self.model(data)
+            recon_batch, z, _, mu, log_var = self.model(data)
             loss = self.model.loss_function(recon_batch, data, mu, log_var)
 
             loss.backward()
@@ -90,24 +81,30 @@ class ModelTrainer(BaseTrainer):
                         batch_idx * len(data),
                         len(self.train_loader.dataset),
                         100.0 * batch_idx / len(self.train_loader),
-                        loss.item() / len(data),
+                        loss.item() / len(data)
                     )
                 )
 
+            if self.record_metrics:
+                self.__get_model_metrics(epoch, recon_batch, data, z, sample_size=16, mode='train')
+
         if self.verbose:
             print(
-                "====> Epoch: {} Average loss: {:.4f}".format(
-                    epoch, train_loss / len(self.train_loader.dataset)
+                "====> Epoch: {} Average loss: {:.4f} \tLikelihood: {:.6f}".format(
+                    epoch, train_loss / len(self.train_loader.dataset),
+                    self.train_metrics['log_p_x'][epoch])
                 )
-            )
 
-    def __test_epoch(self):
+
+    def __test_epoch(self, epoch):
         self.model.eval()
         test_loss = 0
         with torch.no_grad():
             for data, _ in self.test_loader:
                 data = data.to(self.device)
-                recon, _, _, mu, log_var = self.model(data)
+                recon, z, _, mu, log_var = self.model(data)
+
+                self.__get_model_metrics(epoch, recon, data, z, sample_size=16, mode='test')
 
                 # sum up batch loss
                 test_loss += self.model.loss_function(recon, data, mu, log_var).item()
@@ -116,3 +113,19 @@ class ModelTrainer(BaseTrainer):
 
         if self.verbose:
             print("====> Test set loss: {:.4f}".format(test_loss))
+
+    def __get_model_metrics(self, epoch, recon_data, data, z, sample_size=16, mode='train'):
+        
+        metrics = self.model.get_metrics(recon_data, data, z, sample_size=sample_size)
+        for key in self.metrics:
+            try:
+                
+                if mode == 'train':
+                    self.train_metrics[key][epoch] += metrics[key].sum().item() / self.train_samples_size
+                
+                elif mode == 'test':
+                    self.test_metrics[key][epoch] += metrics[key].sum().item() / self.test_samples_size
+
+            except KeyError:
+                print(f'The metrics {key} is not handled')
+        

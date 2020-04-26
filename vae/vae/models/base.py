@@ -1,9 +1,11 @@
 from abc import ABC, abstractmethod
+import torch
 
 
 class BaseVAE(ABC):
     def __init__(self):
-        pass
+
+         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     @abstractmethod
     def encode(self):

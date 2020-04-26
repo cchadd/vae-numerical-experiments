@@ -9,11 +9,10 @@ from .base import BaseVAE
 
 
 class VAE(BaseVAE, nn.Module):
-    def __init__(self, model_type="mlp", latent_dim=2, device="cpu"):
+    def __init__(self, model_type="mlp", latent_dim=2):
 
         BaseVAE.__init__(self)
         nn.Module.__init__(self)
-
         if model_type == "mlp":
             # encoder network
             self.fc1 = nn.Linear(784, 400)
@@ -31,14 +30,19 @@ class VAE(BaseVAE, nn.Module):
             raise Exception(f"Architecture {model_type} is not defined")
 
         self.model_type = model_type
-        self.device = device
+        self.latent_dim = latent_dim
+        self.normal = torch.distributions.MultivariateNormal(
+            loc=torch.zeros(latent_dim),
+            covariance_matrix=torch.eye(latent_dim)
+        )
 
     def forward(self, x):
+
         mu, log_var = self.encode(x.view(-1, 784))
         std = torch.exp(0.5 * log_var)
-        z = self._sample_gauss(mu, std)
-
-        return self.decode(z), mu, log_var
+        z, eps = self._sample_gauss(mu, std)
+        recon_x = self.decode(z)
+        return recon_x, z, eps, mu, log_var
 
     def loss_function(self, recon_x, x, mu, log_var):
         BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
@@ -49,7 +53,9 @@ class VAE(BaseVAE, nn.Module):
         return self.__encoder(x)
 
     def decode(self, z):
-        return self.__decoder(z)
+        x_prob = self.__decoder(z)
+        # Simulate from Bernouilli and return binarised image
+        return torch.distributions.Bernoulli(logits=x_prob).sample()
 
     def __encode_mlp(self, x):
         h1 = F.relu(self.fc1(x))
@@ -62,6 +68,147 @@ class VAE(BaseVAE, nn.Module):
     def _sample_gauss(self, mu, std):
         # Reparametrization trick
 
-        # Sample N(O, I)
+        # Sample N(0, I)
         eps = torch.randn_like(std)
-        return mu + eps * std
+        return mu + eps * std, eps
+
+
+    ########## Estimate densities ############
+
+    def get_metrics(self, recon_x, x, z, sample_size=16):
+        """
+        Estimates all metrics '(log-densities, loss, kl-dvg)
+
+        Output:
+        -------
+        
+        log_densities (dict): Dict with keys [
+            'log_p_x_given_z',
+            'log_p_z_given_x',
+            'log_p_x'
+            'log_p_z'
+            'lop_p_xz'
+            ]
+        """
+        metrics  = {}
+
+        metrics['log_p_x_given_z'] = self.log_p_x_given_z(recon_x, x)
+        metrics['log_p_z_given_x'] = self.log_p_z_given_x(z, recon_x, x, sample_size=sample_size)
+        metrics['log_p_x'] = self.log_p_x(x, sample_size=sample_size)
+        metrics['log_p_z'] = self.log_z(z)
+        metrics['lop_p_xz'] = self.log_p_xz(recon_x, x, z)
+        return metrics
+
+    def log_p_x_given_z(self, recon_x, x, reduction='none'):
+        """
+        Estimate the decoder's log-density modelled as follows:
+            p(x|z)     = \prod_i Bernouilli(x_i|pi_{theta}(z_i))
+            p(x = s|z) = \prod_i (pi(z_i))^x_i * (1 - pi(z_i)^(1 - x_i))"""
+        return - F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction=reduction).sum(dim=1)
+
+    def log_z(self, z):
+        """
+        Return Normal density function as prior on z
+        """
+        return self.normal.log_prob(z)
+
+    def log_p_x(self, x, sample_size=16):
+        """
+        Estimate log(p(x)) using importance sampling with q(z|y)
+        """
+
+        mu, logvar = self.encode(x.view(-1, 784))
+        Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
+        Z = (mu + Eps * torch.exp(0.5 * logvar)).reshape(-1, self.latent_dim)
+        recon_X = self.decode(Z)
+        bce = F.binary_cross_entropy(recon_X, x.view(-1, 784).repeat(sample_size, 1), reduction='none')
+        
+        # compute densities to recover p(x)
+        logpxz = - bce.reshape(sample_size, -1, 784).sum(dim=2) # log(p(x|z))
+        logpz = self.log_z(Z).reshape(sample_size, -1) # log(p(z))
+        logqzx = torch.distributions.MultivariateNormal(
+            loc=mu,
+            covariance_matrix=torch.diag_embed(torch.exp(logvar))
+        ).log_prob(Z.reshape(sample_size, -1, self.latent_dim)).reshape(sample_size, -1) # log(q(z|x))
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(torch.Tensor([sample_size]))
+        return logpx
+
+
+    def log_p_z_given_x(self, z, recon_x, x, sample_size=16):
+        """
+        Estimate log(p(z|x)) using Bayes rule and Importance Sampling for log(p(x))
+        """
+        logpx = self.log_p_x(x, sample_size)
+        lopgxz = self.log_p_x_given_z(recon_x, x)
+        logpz = self.log_z(z)
+        return lopgxz + logpz - logpx
+
+    def log_p_xz(self, recon_x, x, z):
+        """
+        Estimate log(p(x, z)) using Bayes rule
+        """
+        logpxz = self.log_p_x_given_z(recon_x, x)
+        logpz = self.log_z(z)
+        return logpxz + logpz
+
+    #def log_p_x(self, x):
+    #    mu, log_var = self.encode(x.view(-1, 784))
+    #    eps = torch.randn()
+#
+    #def log_p_zx(self, z):
+
+
+
+
+class HVAE(VAE):
+
+    def __init__(self, n_lf=3, beta_zero=1, tempering="fixed", model_type="mlp", latent_dim=2):
+
+        VAE.__init__(self, model_type=model_type, latent_dim=latent_dim)
+
+        self.vae_forward = super().forward
+
+        self.n_lf = n_lf
+
+        assert 0 < beta_zero < 1, "Tempering factor should belong to [0, 1]"
+
+        if tempering=="fixed":
+
+            self.beta_zero_sqrt = nn.Parameter(torch.Tensor([beta_zero]))
+            self.tempering = tempering
+
+        elif tempering=='free':
+
+            raise NotImplementedError()
+
+        
+        def forward(self, x):
+            """
+            Perform Hamiltonian Importance Sampling
+            """
+
+            _, z0, _, _, logvar = self.vae_forward(x)
+            gamma = torch.randn_like(z0, device=self.device)
+            rho = gamma / self.beta_zero_sqrt
+            z = z0
+
+            #for k in range(self.n_lf):
+
+                # Perform leapforog steps
+                #U = 
+
+
+        #def __log_p(self, x, )
+
+        
+
+        def __tempering(self, k):
+            """Perform tempering step"""
+
+            beta_k = ((1 - (1 / self.beta_zero_sqrt) * k / self.n_lf ** 2) + 1 / self.beta_zero_sqrt)
+
+            return 1 / beta_k
+
+        
+
+        
