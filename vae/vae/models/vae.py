@@ -54,8 +54,14 @@ class VAE(BaseVAE, nn.Module):
 
     def decode(self, z):
         x_prob = self.__decoder(z)
-        # Simulate from Bernouilli and return binarised image
-        return torch.distributions.Bernoulli(logits=x_prob).sample()
+        return x_prob
+
+    def sample_img(self, z):
+        """
+        Simulate p(x|z) to generate an image
+        """
+        x_prob = self.decode(z)
+        return torch.distributions.Bernoulli(probs=x_prob).sample()
 
     def __encode_mlp(self, x):
         h1 = F.relu(self.fc1(x))
@@ -130,7 +136,7 @@ class VAE(BaseVAE, nn.Module):
             loc=mu,
             covariance_matrix=torch.diag_embed(torch.exp(logvar))
         ).log_prob(Z.reshape(sample_size, -1, self.latent_dim)).reshape(sample_size, -1) # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(torch.Tensor([sample_size]))
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(torch.Tensor([sample_size]).to(self.device))
         return logpx
 
 
@@ -187,7 +193,7 @@ class HVAE(VAE):
             Perform Hamiltonian Importance Sampling
             """
 
-            _, z0, _, _, logvar = self.vae_forward(x)
+            _, z0, _, _, _ = self.vae_forward(x)
             gamma = torch.randn_like(z0, device=self.device)
             rho = gamma / self.beta_zero_sqrt
             z = z0

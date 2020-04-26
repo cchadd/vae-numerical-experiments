@@ -38,15 +38,26 @@ torch.manual_seed(1)
 
 bs= 128
 
+def random_binarize(img):
+    return (torch.rand_like(img) < img).type(torch.float)
+
+transforms_stack = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Lambda(random_binarize),
+])
+
 train = datasets.MNIST(root='../data/',
                        train=True,
-                       transform=transforms.ToTensor(),
+                       transform=transforms_stack,
                        download=False)
 
 test = datasets.MNIST(root='../data/',
                     train=False,
-                    transform=transforms.ToTensor(),
+                    transform=transforms_stack,
                     download=False) 
+
+
+
 
 # Data Loader (Input Pipeline)
 train_loader = torch.utils.data.DataLoader(dataset=train, batch_size=bs, shuffle=True)
@@ -60,12 +71,10 @@ if torch.cuda.is_available():
 ```
 
 ```python
-torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 train_loader.dataset.data.shape[0]
-```
 
-```python
-trainer = ModelTrainer(vae, train_loader, test_loader, n_epochs=15)
+trainer = ModelTrainer(vae, train_loader, test_loader, n_epochs=30)
 trainer.train()
 ```
 
@@ -75,7 +84,7 @@ trainer.train()
 
 ```python
 with torch.no_grad():
-    z = torch.randn(64, 2)
+    z = torch.randn(64, 2).to(device)
     sample = vae.decode(z)
     sample = torch.reshape(sample, (64, 28, 28))
 plt.matshow(sample.cpu().numpy()[0])
