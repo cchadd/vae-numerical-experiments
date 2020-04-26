@@ -33,7 +33,7 @@ class VAE(BaseVAE, nn.Module):
         self.latent_dim = latent_dim
         self.normal = torch.distributions.MultivariateNormal(
             loc=torch.zeros(latent_dim).to(self.device),
-            covariance_matrix=torch.eye(latent_dim).to(self.device)
+            covariance_matrix=torch.eye(latent_dim).to(self.device),
         )
 
     def forward(self, x):
@@ -78,7 +78,6 @@ class VAE(BaseVAE, nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std, eps
 
-
     ########## Estimate densities ##########
 
     def get_metrics(self, recon_x, x, z, mu, log_var, sample_size=16):
@@ -96,23 +95,29 @@ class VAE(BaseVAE, nn.Module):
             'lop_p_xz'
             ]
         """
-        metrics  = {}
+        metrics = {}
 
-        metrics['log_p_x_given_z'] = self.log_p_x_given_z(recon_x, x)
-        metrics['log_p_z_given_x'] = self.log_p_z_given_x(z, recon_x, x, sample_size=sample_size)
-        metrics['log_p_x'] = self.log_p_x(x, sample_size=sample_size)
-        metrics['log_p_z'] = self.log_z(z)
-        metrics['lop_p_xz'] = self.log_p_xz(recon_x, x, z)
-        metrics['kl_prior'] = self.kl_prior(mu, log_var)
-        metrics['kl_cond'] = self.kl_cond(recon_x, x, z, mu, log_var, sample_size=sample_size)
+        metrics["log_p_x_given_z"] = self.log_p_x_given_z(recon_x, x)
+        metrics["log_p_z_given_x"] = self.log_p_z_given_x(
+            z, recon_x, x, sample_size=sample_size
+        )
+        metrics["log_p_x"] = self.log_p_x(x, sample_size=sample_size)
+        metrics["log_p_z"] = self.log_z(z)
+        metrics["lop_p_xz"] = self.log_p_xz(recon_x, x, z)
+        metrics["kl_prior"] = self.kl_prior(mu, log_var)
+        metrics["kl_cond"] = self.kl_cond(
+            recon_x, x, z, mu, log_var, sample_size=sample_size
+        )
         return metrics
 
-    def log_p_x_given_z(self, recon_x, x, reduction='none'):
+    def log_p_x_given_z(self, recon_x, x, reduction="none"):
         """
         Estimate the decoder's log-density modelled as follows:
             p(x|z)     = \prod_i Bernouilli(x_i|pi_{theta}(z_i))
             p(x = s|z) = \prod_i (pi(z_i))^x_i * (1 - pi(z_i)^(1 - x_i))"""
-        return - F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction=reduction).sum(dim=1)
+        return -F.binary_cross_entropy(
+            recon_x, x.view(-1, 784), reduction=reduction
+        ).sum(dim=1)
 
     def log_z(self, z):
         """
@@ -129,18 +134,24 @@ class VAE(BaseVAE, nn.Module):
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
         recon_X = self.decode(Z)
-        bce = F.binary_cross_entropy(recon_X, x.view(-1, 784).repeat(sample_size, 1), reduction='none')
-        
-        # compute densities to recover p(x)
-        logpxz = - bce.reshape(sample_size, -1, 784).sum(dim=2) # log(p(x|z))
-        logpz = self.log_z(Z).reshape(sample_size, -1) # log(p(z))
-        logqzx = torch.distributions.MultivariateNormal(
-            loc=mu,
-            covariance_matrix=torch.diag_embed(torch.exp(log_var))
-        ).log_prob(Z.reshape(sample_size, -1, self.latent_dim)).reshape(sample_size, -1) # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(torch.Tensor([sample_size]).to(self.device))
-        return logpx
+        bce = F.binary_cross_entropy(
+            recon_X, x.view(-1, 784).repeat(sample_size, 1), reduction="none"
+        )
 
+        # compute densities to recover p(x)
+        logpxz = -bce.reshape(sample_size, -1, 784).sum(dim=2)  # log(p(x|z))
+        logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
+        logqzx = (
+            torch.distributions.MultivariateNormal(
+                loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
+            )
+            .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
+            .reshape(sample_size, -1)
+        )  # log(q(z|x))
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(
+            torch.Tensor([sample_size]).to(self.device)
+        )
+        return logpx
 
     def log_p_z_given_x(self, z, recon_x, x, sample_size=16):
         """
@@ -159,7 +170,6 @@ class VAE(BaseVAE, nn.Module):
         logpz = self.log_z(z)
         return logpxz + logpz
 
-    
     ########## Kullback-Leiber divergences estimates ##########
 
     def kl_prior(self, mu, log_var):
@@ -176,24 +186,30 @@ class VAE(BaseVAE, nn.Module):
         """
         logpzx = self.log_p_z_given_x(z, recon_x, x, sample_size=sample_size)
         logqzx = logqzx = torch.distributions.MultivariateNormal(
-            loc=mu,
-            covariance_matrix=torch.diag_embed(torch.exp(log_var))
+            loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
         ).log_prob(z)
 
         return (logqzx - logpzx).sum()
 
-    #def log_p_x(self, x):
+    # def log_p_x(self, x):
     #    mu, log_var = self.encode(x.view(-1, 784))
     #    eps = torch.randn()
+
+
 #
-    #def log_p_zx(self, z):
-
-
+# def log_p_zx(self, z):
 
 
 class HVAE(VAE):
-
-    def __init__(self, n_lf=3, eps_lf=0.01, beta_zero=1, tempering="fixed", model_type="mlp", latent_dim=2):
+    def __init__(
+        self,
+        n_lf=3,
+        eps_lf=0.01,
+        beta_zero=1,
+        tempering="fixed",
+        model_type="mlp",
+        latent_dim=2,
+    ):
         """
         Inputs:
         -------
@@ -214,16 +230,15 @@ class HVAE(VAE):
 
         assert 0 < beta_zero < 1, "Tempering factor should belong to [0, 1]"
 
-        if tempering=="fixed":
+        if tempering == "fixed":
 
             self.beta_zero_sqrt = nn.Parameter(torch.Tensor([beta_zero]))
             self.tempering = tempering
 
-        elif tempering=='free':
+        elif tempering == "free":
 
             raise NotImplementedError()
 
-        
         def forward(self, x):
             """
             Perform Hamiltonian Importance Sampling
@@ -237,13 +252,12 @@ class HVAE(VAE):
 
             for k in range(self.n_lf):
 
-                
                 # Perform leapforog steps
 
                 recon_x = self.decode(z)
 
                 # Computes potential energy
-                U = - self.log_p_xz(recon_x, x, z).sum()
+                U = -self.log_p_xz(recon_x, x, z).sum()
 
                 # Compute its gradient
                 g = grad(U, z)[0]
@@ -254,7 +268,7 @@ class HVAE(VAE):
 
                 # 2nd leapfrog ste
                 recon_x = self.decode(z)
-                U = - self.log_p_xz(recon_x, x, z).sum()
+                U = -self.log_p_xz(recon_x, x, z).sum()
                 g = grad(U, z)[0]
 
                 rho__ = rho_ - (self.eps_lf / 2) * g
@@ -266,18 +280,13 @@ class HVAE(VAE):
 
             return recon_x, z, z0, rho, eps, gamma, log_var
 
-
-        #def __log_p(self, x, )
-
-        
+        # def __log_p(self, x, )
 
         def __tempering(self, k):
             """Perform tempering step"""
 
-            beta_k = ((1 - (1 / self.beta_zero_sqrt) * k / self.n_lf ** 2) + 1 / self.beta_zero_sqrt)
+            beta_k = (
+                1 - (1 / self.beta_zero_sqrt) * k / self.n_lf ** 2
+            ) + 1 / self.beta_zero_sqrt
 
             return 1 / beta_k
-
-        
-
-        
