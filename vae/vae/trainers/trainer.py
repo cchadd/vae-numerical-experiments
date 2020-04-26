@@ -86,7 +86,7 @@ class ModelTrainer(BaseTrainer):
                 )
 
             if self.record_metrics:
-                self.__get_model_metrics(epoch, recon_batch, data, z, sample_size=16, mode='train')
+                self.__get_model_metrics(epoch, recon_batch, data, z, mu, log_var, sample_size=16, mode='train')
 
         if self.verbose:
             print(
@@ -104,7 +104,7 @@ class ModelTrainer(BaseTrainer):
                 data = data.to(self.device)
                 recon, z, _, mu, log_var = self.model(data)
 
-                self.__get_model_metrics(epoch, recon, data, z, sample_size=16, mode='test')
+                self.__get_model_metrics(epoch, recon, data, z, mu, log_var, sample_size=16, mode='test')
 
                 # sum up batch loss
                 test_loss += self.model.loss_function(recon, data, mu, log_var).item()
@@ -114,9 +114,9 @@ class ModelTrainer(BaseTrainer):
         if self.verbose:
             print("====> Test set loss: {:.4f}".format(test_loss))
 
-    def __get_model_metrics(self, epoch, recon_data, data, z, sample_size=16, mode='train'):
+    def __get_model_metrics(self, epoch, recon_data, data, z, mu, log_var, sample_size=16, mode='train'):
         
-        metrics = self.model.get_metrics(recon_data, data, z, sample_size=sample_size)
+        metrics = self.model.get_metrics(recon_data, data, z, mu, log_var, sample_size=sample_size)
         for key in self.metrics:
             try:
                 
