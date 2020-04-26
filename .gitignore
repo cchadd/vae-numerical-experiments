@@ -5,6 +5,7 @@ data
 
 .vscode
 .ipynb*
+*.ipynb
 
 
 
