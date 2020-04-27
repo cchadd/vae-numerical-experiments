@@ -82,10 +82,6 @@ trainer.train()
 ```
 
 ```python
-60000 / 128
-```
-
-```python
 with torch.no_grad():
     z = torch.randn(64, 2).to(device)
     sample = vae.decode(z)

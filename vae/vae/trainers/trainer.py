@@ -2,6 +2,7 @@ import torch
 import torch.optim as optim
 import numpy as np
 import random
+from tqdm import tqdm_notebook
 from .base import BaseTrainer
 
 
@@ -24,7 +25,7 @@ class ModelTrainer(BaseTrainer):
             Inputs:
             -------
             model (model):
-                - The model to train. It should contain a loss_fonction method taken as
+                - The model to train. It should contain a loss_function method taken as
                 convergence criteria
             train_loader (DataLoader):
                 - DataLoader containng the train dataset
@@ -52,6 +53,8 @@ class ModelTrainer(BaseTrainer):
         random.seed(seed)
         np.random.seed(seed)
 
+        assert model.name in ["VAE", "HVAE"], f"{model.name} is not handled by the trainer"
+
         if optimizer == "adam":
             self.optimizer = optim.Adam(model.parameters(), lr=lr)
 
@@ -66,27 +69,33 @@ class ModelTrainer(BaseTrainer):
     def __train_epoch(self, epoch):
         self.model.train()
         train_loss = 0
-        for batch_idx, (data, _) in enumerate(self.train_loader):
+
+        if self.verbose:
+            print(f'\nTraining of epoch {epoch} in progress...')
+            it = (
+                enumerate(tqdm_notebook(self.train_loader))
+                )
+
+        else:
+            it = enumerate(self.train_loader)
+
+        for batch_idx, (data, _) in it:
             data = data.to(self.device)
             self.optimizer.zero_grad()
-            recon_batch, z, _, mu, log_var = self.model(data)
-            loss = self.model.loss_function(recon_batch, data, mu, log_var)
+
+            if self.model.name == 'VAE':
+                recon_batch, z, _, mu, log_var = self.model(data)
+                loss = self.model.loss_function(recon_batch, data, mu, log_var)
+
+            elif self.model.name == 'HVAE':
+                print(data.shape)
+                recon_batch, z, z0, rho, gamma, mu, log_var = self.model(data)
+                loss = self.model.loss_function(recon_batch, data, z0, z, rho, gamma, mu, log_var)
 
             loss.backward()
             train_loss += loss.item()
             self.optimizer.step()
-
-            if batch_idx % 100 == 0 and self.verbose:
-                print(
-                    "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
-                        epoch,
-                        batch_idx * len(data),
-                        len(self.train_loader.dataset),
-                        100.0 * batch_idx / len(self.train_loader),
-                        loss.item() / len(data),
-                    )
-                )
-
+            
             if self.record_metrics:
                 self.__get_model_metrics(
                     epoch,
@@ -111,18 +120,34 @@ class ModelTrainer(BaseTrainer):
     def __test_epoch(self, epoch):
         self.model.eval()
         test_loss = 0
-        with torch.no_grad():
-            for data, _ in self.test_loader:
-                data = data.to(self.device)
+
+        if self.verbose:
+            print(f'\nTesting of epoch {epoch} in progress...')
+            it = (
+            tqdm_notebook(self.test_loader)
+            )
+
+        else:
+            it = self.test_loader
+
+        for data, _ in it:
+            data = data.to(self.device)
+
+            if self.model.name == 'VAE':
                 recon, z, _, mu, log_var = self.model(data)
-
-                self.__get_model_metrics(
-                    epoch, recon, data, z, mu, log_var, sample_size=16, mode="test"
-                )
-
                 # sum up batch loss
                 test_loss += self.model.loss_function(recon, data, mu, log_var).item()
 
+            elif self.model.name == 'HVAE':
+                recon, z, z0, rho, gamma, mu, log_var = self.model(data)
+                # sum up batch loss
+                test_loss += self.model.loss_function(recon, data, z0, z, rho, gamma, mu, log_var).item()
+
+            self.__get_model_metrics(
+                epoch, recon, data, z, mu, log_var, sample_size=16, mode="test"
+            )
+
+                
         test_loss /= len(self.test_loader.dataset)
 
         if self.verbose:
