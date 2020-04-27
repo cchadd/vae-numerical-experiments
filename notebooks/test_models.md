@@ -28,7 +28,7 @@ import random
 %load_ext autoreload
 %autoreload 2
 
-from vae.models.vae import VAE
+from vae.models.vae import VAE, HVAE
 from vae.trainers.trainer import ModelTrainer
 
 ```
@@ -66,8 +66,11 @@ test_loader = torch.utils.data.DataLoader(dataset=test, batch_size=bs, shuffle=F
 
 ```python
 vae = VAE()
+hvae = HVAE()
 if torch.cuda.is_available():
     vae.cuda()
+    hvae.cuda()
+
 ```
 
 ```python
