@@ -272,7 +272,6 @@ class HVAE(VAE):
             z = z + self.eps_lf * rho_
 
             # 2nd leapfrog ste
-            recon_x = self.decode(z)
             U = -self.log_p_xz(recon_x, x, z).sum()
             g = grad(U, z, create_graph=True)[0]
 
@@ -325,7 +324,6 @@ class HVAE(VAE):
 
             Z = Z + self.eps_lf * rho
 
-            recon_X = self.decode(Z)
             U = self.hamiltonian(recon_X, X_rep, Z, rho)
             g = grad(U, Z, create_graph=True)[0]
 
@@ -403,10 +401,11 @@ class RHVAE(HVAE):
         z = z0
         beta_sqrt_old = self.beta_zero_sqrt
 
+        recon_x = self.decode(z)
+
         # Define a metric G(x) = \Sigma^{-1}(x)
         G = torch.diag_embed((-log_var).exp())
         G_inv = torch.diag_embed((log_var).exp())
-
         G_log_det = torch.logdet(G)
 
 
@@ -430,7 +429,7 @@ class RHVAE(HVAE):
             rho = (beta_sqrt / beta_sqrt_old) * rho__
             beta_sqrt_old = beta_sqrt
 
-        recon_x = self.decode(z)
+        
         return recon_x, z, z0, rho, gamma, mu, log_var
 
 
