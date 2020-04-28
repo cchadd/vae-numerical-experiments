@@ -24,11 +24,12 @@ from torch.autograd import Variable
 from torchvision.utils import save_image
 import random
 
+
 %matplotlib inline
 %load_ext autoreload
 %autoreload 2
 
-from vae.models.vae import VAE, HVAE
+from vae.models.vae import VAE, HVAE, RHVAE
 from vae.trainers.trainer import ModelTrainer
 
 ```
@@ -67,9 +68,11 @@ test_loader = torch.utils.data.DataLoader(dataset=test, batch_size=bs, shuffle=F
 ```python
 vae = VAE()
 hvae = HVAE()
+rhvae = RHVAE()
 if torch.cuda.is_available():
     vae.cuda()
     hvae.cuda()
+    rhvae.cuda()
 
 ```
 
@@ -77,16 +80,25 @@ if torch.cuda.is_available():
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 train_loader.dataset.data.shape[0]
 
-trainer = ModelTrainer(vae, train_loader, test_loader, n_epochs=30)
+trainer = ModelTrainer(rhvae, train_loader, test_loader, n_epochs=30)
+
 trainer.train()
+```
+
+```python
+rhvae.name
 ```
 
 ```python
 with torch.no_grad():
     z = torch.randn(64, 2).to(device)
-    sample = vae.decode(z)
+    sample = hvae.decode(z)
     sample = torch.reshape(sample, (64, 28, 28))
 plt.matshow(sample.cpu().numpy()[0])
+```
+
+```python
+8 * 16
 ```
 
 ```python

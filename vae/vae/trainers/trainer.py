@@ -94,11 +94,9 @@ class ModelTrainer(BaseTrainer):
                 loss = self.model.loss_function(
                     recon_batch, data, z0, z, rho, gamma, mu, log_var
                 )
-
             loss.backward()
             train_loss += loss.item()
             self.optimizer.step()
-
             if self.record_metrics:
                 self.__get_model_metrics(
                     epoch,
@@ -139,7 +137,7 @@ class ModelTrainer(BaseTrainer):
                 # sum up batch loss
                 test_loss += self.model.loss_function(recon, data, mu, log_var).item()
 
-            elif self.model.name == "HVAE":
+            elif self.model.name == "HVAE" or self.model.n_epochs == "RHVAE":
                 recon, z, z0, rho, gamma, mu, log_var = self.model(data)
                 # sum up batch loss
                 test_loss += self.model.loss_function(
