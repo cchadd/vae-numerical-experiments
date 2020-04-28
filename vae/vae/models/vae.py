@@ -317,9 +317,15 @@ class HVAE(VAE):
 
         if self.name == "RHVAE":
             G = torch.diag_embed((-log_var).exp()).repeat(sample_size, 1, 1)
-            G_inv = torch.diag_embed(1 / (-log_var).exp()).repeat(sample_size, 1, 1)
+            G_inv = torch.inverse(G).repeat(sample_size, 1, 1)
             G_log_det = torch.logdet(G).repeat(sample_size, 1, 1)
 
+            print('--------------------------------------')
+            print('logvar : ', mu)
+            print('G_inv : ', G_inv)
+            print('log_det : ', G_log_det)
+            print('RHO : ', rho)
+#
         else:
             G = None
             G_inv = None
@@ -370,11 +376,13 @@ class HVAE(VAE):
 
         if self.name == "HVAE":
             return -self.log_p_xz(recon_x, x, z).sum()
+        
+        norm = (torch.solve(rho[:,:,None], G).solution[:,:,0] * rho).sum()
         rho_T = torch.transpose(rho.unsqueeze(-1), 1, 2)
         return (
             -self.log_p_xz(recon_x, x, z).sum()
-            + 0.5 * torch.bmm(torch.bmm(rho_T, G_inv), rho.unsqueeze(-1)).sum()
-            + 0.5 * G_log_det.log().sum()
+            + norm #+ 0.5 * torch.bmm(torch.bmm(rho_T, G_inv), rho.unsqueeze(-1)).sum()
+            + 0.5 * G_log_det.sum()
         )
 
     def _tempering(self, k):
@@ -391,7 +399,7 @@ class RHVAE(HVAE):
     def __init__(
         self,
         n_lf=2,
-        eps_lf=3,
+        eps_lf=0.01,
         beta_zero=0.3,
         tempering="fixed",
         model_type="mlp",
@@ -415,28 +423,25 @@ class RHVAE(HVAE):
 
         # Define a metric G(x) = \Sigma^{-1}(x)
         G = torch.diag_embed((-log_var).exp())
-        G_inv = torch.diag_embed(1 / (-log_var).exp())
+        G_inv = torch.diag_embed((log_var).exp())
+        print(log_var)
         G_log_det = torch.logdet(G)
-
-        
+        print('G_log_det', G_log_det)
 
         for k in range(self.n_lf):
 
-            recon_x = self.decode(z)
-
-
             # Perform leapfrog steps
-            #print(f'step {k}: ', recon_x)
             rho_ = self.__leap_step_1(
-                recon_x, x, z, rho, G, G_inv, G_log_det, self.eps_lf
+                recon_x, x, z, rho, G, G_inv, G_log_det
             )
             #print(f'step {k} leap 1: ', rho_)
+
             z_ = self.__leap_step_2(
-                recon_x, x, z, rho_, G, G_inv, G_log_det, self.eps_lf
+                recon_x, x, z, rho_, G, G_inv, G_log_det
             )
             #print(f'step {k} leap 2: ', z_)
             rho__ = self.__leap_step_3(
-                recon_x, x, z_, rho_, G, G_inv, G_log_det, self.eps_lf
+                recon_x, x, z_, rho_, G, G_inv, G_log_det
             )
             #print(f'step {k} leap 3: ', rho__)
 
@@ -444,10 +449,11 @@ class RHVAE(HVAE):
             beta_sqrt = self._tempering(k)
             rho = (beta_sqrt / beta_sqrt_old) * rho__
             beta_sqrt_old = beta_sqrt
-
+        print('LOGVARRRRRR : ', G)
+        recon_x = self.decode(z)
         return recon_x, z, z0, rho, gamma, mu, log_var
 
-    def __leap_step_1(self, recon_x, x, z, rho, G, G_inv, G_log_det, eps_lf, steps=3):
+    def __leap_step_1(self, recon_x, x, z, rho, G, G_inv, G_log_det, steps=3):
         """
         Resolves eq.16 from Girolami using fixed point iterations
         """
@@ -455,7 +461,7 @@ class RHVAE(HVAE):
         def f_(rho):
             H = self.hamiltonian(recon_x, x, z, rho, G, G_inv, G_log_det)
             gz = grad(H, z, retain_graph=True)[0]
-            return rho - 0.5 * eps_lf * gz
+            return rho - 0.5 * self.eps_lf * gz
 
         rho_ = rho.clone()
         for _ in range(steps):
@@ -463,7 +469,7 @@ class RHVAE(HVAE):
         #print('Leap 1 rho: ', rho_)
         return rho_
 
-    def __leap_step_2(self, recon_x, x, z, rho, G, G_inv, G_log_det, eps_lf, steps=3):
+    def __leap_step_2(self, recon_x, x, z, rho, G, G_inv, G_log_det, steps=3):
         """
         Resolves eq.17 from Girolami using fixed point iterations
         """
@@ -473,7 +479,7 @@ class RHVAE(HVAE):
         def f_(z):
             H = self.hamiltonian(recon_x, x, z, rho, G, G_inv, G_log_det)
             grho = grad(H, rho, retain_graph=True)[0]
-            return z + 0.5 * eps_lf * (grho_0 + grho)
+            return z + 0.5 * self.eps_lf * (grho_0 + grho)
 
         z_ = z.clone()
         for _ in range(steps):
@@ -481,8 +487,8 @@ class RHVAE(HVAE):
         #print('Leap 2: ', z_)
         return z_
 
-    def __leap_step_3(self, recon_x, x, z, rho, G, G_inv, G_log_det, eps_lf, steps=3):
+    def __leap_step_3(self, recon_x, x, z, rho, G, G_inv, G_log_det, steps=3):
         H = self.hamiltonian(recon_x, x, z, rho, G, G_inv, G_log_det)
-        gz = grad(H, z, retain_graph=True)[0]
+        gz = grad(H, z, create_graph=True)[0]
         #print('Leap 3: ', rho - 0.5 * eps_lf * gz)
-        return rho - 0.5 * eps_lf * gz
+        return rho - 0.5 * self.eps_lf * gz
