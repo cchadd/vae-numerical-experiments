@@ -255,10 +255,11 @@ class HVAE(VAE):
         z = z0
         beta_sqrt_old = self.beta_zero_sqrt
 
+        recon_x = self.decode(z)
+
         for k in range(self.n_lf):
 
-            # Perform leapfrog steps
-            recon_x = self.decode(z)
+            # Perform leapfrog steps            
 
             # Computes potential energy
             U = -self.log_p_xz(recon_x, x, z).sum()
@@ -315,30 +316,17 @@ class HVAE(VAE):
         beta_sqrt_old = self.beta_zero_sqrt
         X_rep = x.repeat(sample_size, 1, 1, 1)
 
-        if self.name == "RHVAE":
-            G = torch.diag_embed((-log_var).exp()).repeat(sample_size, 1, 1)
-            G_inv = torch.inverse(G).repeat(sample_size, 1, 1)
-            G_log_det = torch.logdet(G).repeat(sample_size, 1, 1)
-
-#
-        else:
-            G = None
-            G_inv = None
-            G_log_det = None
 
         for k in range(self.n_lf):
 
-            # Perform leapfrog
-            recon_X = self.decode(Z)
-
-            U = self.hamiltonian(recon_X, X_rep, Z, rho, G, G_inv, G_log_det)
+            U = self.hamiltonian(recon_X, X_rep, Z, rho)
             g = grad(U, Z, create_graph=True)[0]
             rho_ = rho - (self.eps_lf) * g
 
             Z = Z + self.eps_lf * rho
 
             recon_X = self.decode(Z)
-            U = self.hamiltonian(recon_X, X_rep, Z, rho, G, G_inv, G_log_det)
+            U = self.hamiltonian(recon_X, X_rep, Z, rho)
             g = grad(U, Z, create_graph=True)[0]
 
             rho__ = rho_ - (self.eps_lf / 2) * g
@@ -428,12 +416,14 @@ class RHVAE(HVAE):
             rho_ = self.__leap_step_1(
                 recon_x, x, z, rho, G, G_inv, G_log_det
             )
-            z_ = self.__leap_step_2(
+            z = self.__leap_step_2(
                 recon_x, x, z, rho_, G, G_inv, G_log_det
             )
             rho__ = self.__leap_step_3(
-                recon_x, x, z_, rho_, G, G_inv, G_log_det
+                recon_x, x, z, rho_, G, G_inv, G_log_det
             )
+
+            rho = rho__
 
             # tempering steps
             beta_sqrt = self._tempering(k)
@@ -442,6 +432,67 @@ class RHVAE(HVAE):
 
         recon_x = self.decode(z)
         return recon_x, z, z0, rho, gamma, mu, log_var
+
+
+    def log_p_x(self, x, sample_size=16):
+        """
+        Estimate log(p(x)) using importance sampling on q(z|x)
+        """
+
+        mu, log_var = self.encode(x.view(-1, 784))
+        Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
+        Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
+        recon_X = self.decode(Z)
+
+        gamma = torch.randn_like(Z, device=self.device)
+        rho = gamma / self.beta_zero_sqrt
+        beta_sqrt_old = self.beta_zero_sqrt
+        X_rep = x.repeat(sample_size, 1, 1, 1)
+
+        G = torch.diag_embed((-log_var).exp())
+        G_rep = torch.diag_embed((-log_var).exp()).repeat(sample_size, 1, 1)
+        G_inv_rep = torch.inverse(G).repeat(sample_size, 1, 1)
+        G_log_det_rep = torch.logdet(G).repeat(sample_size, 1, 1)
+
+        for k in range(self.n_lf):
+
+            rho_ = self.__leap_step_1(
+                recon_X, X_rep, Z, rho, G_rep, G_inv_rep, G_log_det_rep
+            )
+            Z = self.__leap_step_2(
+                recon_X, X_rep, Z, rho_, G_rep, G_inv_rep, G_log_det_rep
+            )
+            rho__ = self.__leap_step_3(
+                recon_X, X_rep, Z, rho_, G_rep, G_inv_rep, G_log_det_rep
+            )
+
+            # tempering
+            beta_sqrt = self._tempering(k)
+            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            beta_sqrt_old = beta_sqrt
+
+        bce = F.binary_cross_entropy(
+            recon_X, x.view(-1, 784).repeat(sample_size, 1), reduction="none"
+        )
+
+        # compute densities to recover p(x)
+        logpxz = -bce.reshape(sample_size, -1, 784).sum(dim=2)  # log(p(x|z))
+        logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
+        logqzx = (
+            torch.distributions.MultivariateNormal(
+                loc=mu, covariance_matrix=G
+            )
+            .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
+            .reshape(sample_size, -1)
+        )  # log(q(z|x))
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(
+            torch.Tensor([sample_size]).to(self.device)
+        )
+        return logpx
+
+
+
+
 
     def __leap_step_1(self, recon_x, x, z, rho, G, G_inv, G_log_det, steps=3):
         """
