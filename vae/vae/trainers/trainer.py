@@ -137,7 +137,7 @@ class ModelTrainer(BaseTrainer):
                 # sum up batch loss
                 test_loss += self.model.loss_function(recon, data, mu, log_var).item()
 
-            elif self.model.name == "HVAE" or self.model.n_epochs == "RHVAE":
+            elif self.model.name == "HVAE" or self.model.name == "RHVAE":
                 recon, z, z0, rho, gamma, mu, log_var = self.model(data)
                 # sum up batch loss
                 test_loss += self.model.loss_function(
