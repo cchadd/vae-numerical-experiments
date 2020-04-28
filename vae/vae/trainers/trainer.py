@@ -53,7 +53,11 @@ class ModelTrainer(BaseTrainer):
         random.seed(seed)
         np.random.seed(seed)
 
-        assert model.name in ["VAE", "HVAE"], f"{model.name} is not handled by the trainer"
+        assert model.name in [
+            "VAE",
+            "HVAE",
+            "RHVAE",
+        ], f"{model.name} is not handled by the trainer"
 
         if optimizer == "adam":
             self.optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -71,10 +75,8 @@ class ModelTrainer(BaseTrainer):
         train_loss = 0
 
         if self.verbose:
-            print(f'\nTraining of epoch {epoch} in progress...')
-            it = (
-                enumerate(tqdm_notebook(self.train_loader))
-                )
+            print(f"\nTraining of epoch {epoch} in progress...")
+            it = enumerate(tqdm_notebook(self.train_loader))
 
         else:
             it = enumerate(self.train_loader)
@@ -83,19 +85,20 @@ class ModelTrainer(BaseTrainer):
             data = data.to(self.device)
             self.optimizer.zero_grad()
 
-            if self.model.name == 'VAE':
+            if self.model.name == "VAE":
                 recon_batch, z, _, mu, log_var = self.model(data)
                 loss = self.model.loss_function(recon_batch, data, mu, log_var)
 
-            elif self.model.name == 'HVAE':
-                print(data.shape)
+            elif self.model.name == "HVAE" or self.model.name == "RHVAE":
                 recon_batch, z, z0, rho, gamma, mu, log_var = self.model(data)
-                loss = self.model.loss_function(recon_batch, data, z0, z, rho, gamma, mu, log_var)
+                loss = self.model.loss_function(
+                    recon_batch, data, z0, z, rho, gamma, mu, log_var
+                )
 
             loss.backward()
             train_loss += loss.item()
             self.optimizer.step()
-            
+
             if self.record_metrics:
                 self.__get_model_metrics(
                     epoch,
@@ -122,10 +125,8 @@ class ModelTrainer(BaseTrainer):
         test_loss = 0
 
         if self.verbose:
-            print(f'\nTesting of epoch {epoch} in progress...')
-            it = (
-            tqdm_notebook(self.test_loader)
-            )
+            print(f"\nTesting of epoch {epoch} in progress...")
+            it = tqdm_notebook(self.test_loader)
 
         else:
             it = self.test_loader
@@ -133,21 +134,22 @@ class ModelTrainer(BaseTrainer):
         for data, _ in it:
             data = data.to(self.device)
 
-            if self.model.name == 'VAE':
+            if self.model.name == "VAE":
                 recon, z, _, mu, log_var = self.model(data)
                 # sum up batch loss
                 test_loss += self.model.loss_function(recon, data, mu, log_var).item()
 
-            elif self.model.name == 'HVAE':
+            elif self.model.name == "HVAE":
                 recon, z, z0, rho, gamma, mu, log_var = self.model(data)
                 # sum up batch loss
-                test_loss += self.model.loss_function(recon, data, z0, z, rho, gamma, mu, log_var).item()
+                test_loss += self.model.loss_function(
+                    recon, data, z0, z, rho, gamma, mu, log_var
+                ).item()
 
             self.__get_model_metrics(
                 epoch, recon, data, z, mu, log_var, sample_size=16, mode="test"
             )
 
-                
         test_loss /= len(self.test_loader.dataset)
 
         if self.verbose:
