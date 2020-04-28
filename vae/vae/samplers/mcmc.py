@@ -84,7 +84,7 @@ class HMC(BaseMCMCSampler):
 
         """
 
-        x0 = self.__check_start(x0)        
+        x0 = self.__check_start(x0)
 
         if M is None:
             M = torch.eye(self.dim)
@@ -102,10 +102,10 @@ class HMC(BaseMCMCSampler):
         M_log_det = torch.logdet(M)
 
         if G is None:
-            self.sampler_mode = 'HMC'
+            self.sampler_mode = "HMC"
 
         else:
-            self.sampler_mode = 'RHMC'
+            self.sampler_mode = "RHMC"
 
         if full_trajectory:
             x = torch.zeros(self.chain_size * n_lf, self.dim)
@@ -125,12 +125,14 @@ class HMC(BaseMCMCSampler):
 
         for i in it:
 
-            if self.sampler_mode == 'HMC':
+            if self.sampler_mode == "HMC":
                 x_lf, p_lf = self.__leapfrog(n_lf, log_proba, M, M_inv, x_init, eps)
-            
+
             else:
-                x_lf, p_lf = self.__generalized_leapfrog(n_lf, log_proba, G, x_init, eps)
-            
+                x_lf, p_lf = self.__generalized_leapfrog(
+                    n_lf, log_proba, G, x_init, eps
+                )
+
             if not skip_acceptance:
                 H_start = self.__hamiltonian(
                     x_lf[0], p_lf[0], log_proba, M_inv, M_log_det, G=G
@@ -178,7 +180,6 @@ class HMC(BaseMCMCSampler):
             x0 = torch.zeros(self.dim)
 
         return x0
-
 
     def __leapfrog(
         self,
@@ -238,7 +239,9 @@ class HMC(BaseMCMCSampler):
 
         return x, p
 
-    def __generalized_leapfrog(self, n_lf, log_proba, G, x0, eps=0.1, display_progress=False, only_final=False):
+    def __generalized_leapfrog(
+        self, n_lf, log_proba, G, x0, eps=0.1, display_progress=False, only_final=False
+    ):
 
         x = torch.zeros(n_lf + 1, self.dim)
         p = torch.zeros(n_lf + 1, self.dim)
@@ -247,7 +250,7 @@ class HMC(BaseMCMCSampler):
         p[0] = torch.distributions.MultivariateNormal(
             loc=torch.zeros(self.dim), covariance_matrix=G(x0)
         ).sample()
-        
+
         it = (
             tqdm_notebook(range(1, n_lf + 1))
             if display_progress
@@ -255,8 +258,8 @@ class HMC(BaseMCMCSampler):
         )
 
         for i in it:
-            x_ = x[i-1].clone()
-            p_ = p[i-1].clone()
+            x_ = x[i - 1].clone()
+            p_ = p[i - 1].clone()
             x_.requires_grad_(True)
             p_.requires_grad_(True)
             p_ = self.__leap_step_1(x_, p_, log_proba, G, eps)
@@ -270,11 +273,11 @@ class HMC(BaseMCMCSampler):
 
         return x, p
 
-
     def __leap_step_1(self, x, p, log_proba, G, eps, steps=3):
         """
         Resolves eq.16 from Girolami using fixed point iterations
         """
+
         def f_(p):
             H = self.__hamiltonian(x, p, log_proba, G=G)
             gx = grad(H, x)[0]
@@ -285,7 +288,6 @@ class HMC(BaseMCMCSampler):
             p_ = f_(p_)
 
         return p_
-
 
     def __leap_step_2(self, x, p, log_proba, G, eps, steps=3):
         """
@@ -326,7 +328,7 @@ class HMC(BaseMCMCSampler):
         log_proba (function): function taking [chain_size, dimension] arrays and returns a [chain_size] log_probability
         """
 
-        if self.sampler_mode=='HMC':
+        if self.sampler_mode == "HMC":
 
             H = (
                 -log_proba(x[None])
@@ -348,4 +350,3 @@ class HMC(BaseMCMCSampler):
             )
 
         return H
-            
