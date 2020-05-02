@@ -14,7 +14,9 @@ class VAE(BaseVAE, nn.Module):
         BaseVAE.__init__(self)
         nn.Module.__init__(self)
 
+        
         self.name = "VAE"
+        self.archi = "Bernoulli"
 
         if model_type == "mlp":
             # encoder network
@@ -188,7 +190,7 @@ class VAE(BaseVAE, nn.Module):
         p(z|x) is approximated using IS on log(p(x))
         """
         logpzx = self.log_p_z_given_x(z, recon_x, x, sample_size=sample_size)
-        logqzx = logqzx = torch.distributions.MultivariateNormal(
+        logqzx = torch.distributions.MultivariateNormal(
             loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
         ).log_prob(z)
 
