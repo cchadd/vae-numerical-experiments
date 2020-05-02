@@ -42,7 +42,6 @@ class VAE(BaseVAE, nn.Module):
         )
 
     def forward(self, x):
-
         mu, log_var = self.encode(x.view(-1, 784))
         std = torch.exp(0.5 * log_var)
         z, eps = self._sample_gauss(mu, std)
