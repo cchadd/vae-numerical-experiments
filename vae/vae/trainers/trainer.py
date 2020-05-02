@@ -57,7 +57,13 @@ class ModelTrainer(BaseTrainer):
             "VAE",
             "HVAE",
             "RHVAE",
+            "GEO_VAE"
         ], f"{model.name} is not handled by the trainer"
+
+        assert model.archi in [
+            "Bernoulli",
+            "Gauss"
+        ], f"{model.archi} is not handled by the trainer"
 
         if optimizer == "adam":
             self.optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -85,15 +91,33 @@ class ModelTrainer(BaseTrainer):
             data = data.to(self.device)
             self.optimizer.zero_grad()
 
-            if self.model.name == "VAE":
-                recon_batch, z, _, mu, log_var = self.model(data)
-                loss = self.model.loss_function(recon_batch, data, mu, log_var)
+            # Train Bernoulli models
+            if self.model.archi == "Bernoulli":
 
-            elif self.model.name == "HVAE" or self.model.name == "RHVAE":
-                recon_batch, z, z0, rho, gamma, mu, log_var = self.model(data)
-                loss = self.model.loss_function(
-                    recon_batch, data, z0, z, rho, gamma, mu, log_var
-                )
+                if self.model.name == "VAE":
+                    recon_batch, z, _, mu, log_var = self.model(data)
+                    loss = self.model.loss_function(recon_batch, data, mu, log_var)
+
+                elif self.model.name == "HVAE" or self.model.name == "RHVAE":
+                    recon_batch, z, z0, rho, gamma, mu, log_var = self.model(data)
+                    loss = self.model.loss_function(
+                        recon_batch, data, z0, z, rho, gamma, mu, log_var
+                    )
+
+            elif self.model.archi == "Gauss":
+
+                if self.model.name == "VAE":
+                    #if self.n_epochs < self.n_epochs / 2:
+                    recon_batch, z, _, mu, log_var = self.model(data, ensure_geo=False)
+                    
+                    #else:
+                    #    recon_batch, z, _, mu, log_var = self.model(data, ensure_geo=False)
+
+                    (recon_mu, recon_log_var) = recon_batch
+
+                    loss = self.model.loss_function(data, recon_mu, recon_log_var, mu, log_var)
+
+
             loss.backward()
             train_loss += loss.item()
             self.optimizer.step()
@@ -111,10 +135,11 @@ class ModelTrainer(BaseTrainer):
 
         if self.verbose:
             print(
-                "====> Epoch: {} Average loss: {:.4f} \tLikelihood: {:.6f}".format(
+                "====> Epoch: {} Average loss: {:.4f} \tLikelihood: {:.6f} \t KL prior: {:.4f}".format(
                     epoch,
                     train_loss / len(self.train_loader.dataset),
                     self.train_metrics["log_p_x"][epoch],
+                    self.train_metrics["kl_prior"][epoch]
                 )
             )
 
@@ -132,17 +157,30 @@ class ModelTrainer(BaseTrainer):
         for data, _ in it:
             data = data.to(self.device)
 
-            if self.model.name == "VAE":
-                recon, z, _, mu, log_var = self.model(data)
-                # sum up batch loss
-                test_loss += self.model.loss_function(recon, data, mu, log_var).item()
+            if self.model.archi == "Bernoulli":
 
-            elif self.model.name == "HVAE" or self.model.name == "RHVAE":
-                recon, z, z0, rho, gamma, mu, log_var = self.model(data)
-                # sum up batch loss
-                test_loss += self.model.loss_function(
-                    recon, data, z0, z, rho, gamma, mu, log_var
-                ).item()
+                if self.model.name == "VAE":
+                    recon, z, _, mu, log_var = self.model(data)
+                    # sum up batch loss
+                    test_loss += self.model.loss_function(recon, data, mu, log_var).item()
+
+                elif self.model.name == "HVAE" or self.model.name == "RHVAE":
+                    recon, z, z0, rho, gamma, mu, log_var = self.model(data)
+                    # sum up batch loss
+                    test_loss += self.model.loss_function(
+                        recon, data, z0, z, rho, gamma, mu, log_var
+                    ).item()
+
+
+            elif self.model.archi == "Gauss":
+
+                if self.model.name == "VAE":
+
+                    recon, z, _, mu, log_var = self.model(data)
+                    (recon_mu, recon_log_var) = recon
+
+                    # sum up batch loss
+                    test_loss += self.model.loss_function(data, recon_mu, recon_log_var, mu, log_var).item()
 
             self.__get_model_metrics(
                 epoch, recon, data, z, mu, log_var, sample_size=16, mode="test"
@@ -157,9 +195,21 @@ class ModelTrainer(BaseTrainer):
         self, epoch, recon_data, data, z, mu, log_var, sample_size=16, mode="train"
     ):
 
-        metrics = self.model.get_metrics(
-            recon_data, data, z, mu, log_var, sample_size=sample_size
-        )
+        if self.model.archi == "Bernoulli":
+
+            metrics = self.model.get_metrics(
+                recon_data, data, z, mu, log_var, sample_size=sample_size
+            )
+
+        elif self.model.archi == "Gauss":
+
+            (recon_mu, recon_log_var) = recon_data 
+
+            metrics = self.model.get_metrics(
+                recon_mu, recon_log_var, data, z, mu, log_var, sample_size=sample_size
+            )            
+
+
         for key in self.metrics:
             try:
 
