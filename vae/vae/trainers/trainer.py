@@ -113,9 +113,7 @@ class ModelTrainer(BaseTrainer):
                     #else:
                     #    recon_batch, z, _, mu, log_var = self.model(data, ensure_geo=False)
 
-                    (recon_mu, recon_log_var) = recon_batch
-
-                    loss = self.model.loss_function(data, recon_mu, recon_log_var, mu, log_var)
+                    loss = self.model.loss_function(recon_batch, data, mu, log_var)
 
 
             loss.backward()
@@ -177,10 +175,9 @@ class ModelTrainer(BaseTrainer):
                 if self.model.name == "VAE":
 
                     recon, z, _, mu, log_var = self.model(data)
-                    (recon_mu, recon_log_var) = recon
 
                     # sum up batch loss
-                    test_loss += self.model.loss_function(data, recon_mu, recon_log_var, mu, log_var).item()
+                    test_loss += self.model.loss_function(recon, data, mu, log_var).item()
 
             self.__get_model_metrics(
                 epoch, recon, data, z, mu, log_var, sample_size=16, mode="test"
@@ -195,20 +192,9 @@ class ModelTrainer(BaseTrainer):
         self, epoch, recon_data, data, z, mu, log_var, sample_size=16, mode="train"
     ):
 
-        if self.model.archi == "Bernoulli":
-
-            metrics = self.model.get_metrics(
-                recon_data, data, z, mu, log_var, sample_size=sample_size
-            )
-
-        elif self.model.archi == "Gauss":
-
-            (recon_mu, recon_log_var) = recon_data 
-
-            metrics = self.model.get_metrics(
-                recon_mu, recon_log_var, data, z, mu, log_var, sample_size=sample_size
-            )            
-
+        metrics = self.model.get_metrics(
+            recon_data, data, z, mu, log_var, sample_size=sample_size
+        )
 
         for key in self.metrics:
             try:
