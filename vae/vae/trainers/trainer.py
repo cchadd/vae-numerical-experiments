@@ -119,6 +119,7 @@ class ModelTrainer(BaseTrainer):
             loss.backward()
             train_loss += loss.item()
             self.optimizer.step()
+
             if self.record_metrics:
                 self.__get_model_metrics(
                     epoch,
@@ -130,6 +131,8 @@ class ModelTrainer(BaseTrainer):
                     sample_size=16,
                     mode="train",
                 )
+
+        self.losses["train_loss"][epoch] += train_loss / len(self.train_loader.dataset)
 
         if self.verbose:
             print(
@@ -184,6 +187,8 @@ class ModelTrainer(BaseTrainer):
             )
 
         test_loss /= len(self.test_loader.dataset)
+
+        self.losses["test_loss"][epoch] += test_loss
 
         if self.verbose:
             print("====> Test set loss: {:.4f}".format(test_loss))
