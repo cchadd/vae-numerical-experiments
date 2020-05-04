@@ -31,7 +31,7 @@ class BaseTrainer(ABC):
 
             self.losses = {
                 "train_loss": [0] * n_epochs,
-                "test_loss:": [0] * n_epochs
+                "test_loss": [0] * n_epochs
             }
 
             self.train_metrics = {key: [0] * n_epochs for key in self.metrics}
