@@ -9,7 +9,7 @@ from .base import BaseVAE
 
 
 class VAE(BaseVAE, nn.Module):
-    def __init__(self, model_type="mlp", latent_dim=2):
+    def __init__(self, model_type="mlp", input_dim=784, latent_dim=2):
 
         BaseVAE.__init__(self)
         nn.Module.__init__(self)
@@ -18,15 +18,35 @@ class VAE(BaseVAE, nn.Module):
         self.name = "VAE"
         self.archi = "Bernoulli"
 
-        if model_type == "mlp":
+        if model_type == "convnet":
+            self.conv1 = nn.Conv2d(1, 16, 5, 2, padding=2)
+            self.conv2 = nn.Conv2d(16, 32, 5, 2, padding=2)
+            self.conv3 = nn.Conv2d(32, 32, 5, 2, padding=2)
+            self.fc1 = nn.Linear(512, 450)
+            self.fc2 = nn.Linear(450, latent_dim)
+            self.fc22 = nn.Linear(450, latent_dim)
+
+            self.fc3 = nn.Linear(latent_dim, 450)
+            self.fc4 = nn.Linear(450, 512)
+            self.upsample = nn.Upsample(scale_factor=2)
+            self.deconv1 = nn.ConvTranspose2d(32, 32, 5, 2, padding=2)
+            self.deconv2 = nn.ConvTranspose2d(32, 16, 5, 2,
+                                              padding=2, output_padding=1)
+            self.deconv3 = nn.ConvTranspose2d(16, 1, 5, 2,
+                                              padding=2, output_padding=1)
+            
+            self.__encoder = self.__encode_convnet
+            self.__decoder = self.__decode_convnet
+
+        elif model_type == "mlp":
             # encoder network
-            self.fc1 = nn.Linear(784, 400)
-            self.fc21 = nn.Linear(400, latent_dim)
-            self.fc22 = nn.Linear(400, latent_dim)
+            self.fc1 = nn.Linear(input_dim, 2)
+            self.fc21 = nn.Linear(2, latent_dim)
+            self.fc22 = nn.Linear(2, latent_dim)
 
             # decoder network
-            self.fc3 = nn.Linear(latent_dim, 400)
-            self.fc4 = nn.Linear(400, 784)
+            self.fc3 = nn.Linear(latent_dim, 2)
+            self.fc4 = nn.Linear(2, input_dim)
 
             self.__encoder = self.__encode_mlp
             self.__decoder = self.__decode_mlp
@@ -35,6 +55,7 @@ class VAE(BaseVAE, nn.Module):
             raise Exception(f"Architecture {model_type} is not defined")
 
         self.model_type = model_type
+        self.input_dim = input_dim
         self.latent_dim = latent_dim
         self.normal = torch.distributions.MultivariateNormal(
             loc=torch.zeros(latent_dim).to(self.device),
@@ -42,15 +63,16 @@ class VAE(BaseVAE, nn.Module):
         )
 
     def forward(self, x):
-        mu, log_var = self.encode(x.view(-1, 784))
+        mu, log_var = self.encode(x.view(-1, self.input_dim))
         std = torch.exp(0.5 * log_var)
         z, eps = self._sample_gauss(mu, std)
         recon_x = self.decode(z)
         return recon_x, z, eps, mu, log_var
 
     def loss_function(self, recon_x, x, mu, log_var):
-        BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
+        BCE = F.binary_cross_entropy(recon_x, x.view(-1, self.input_dim), reduction="sum")
         KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+
         return BCE + KLD
 
     def encode(self, x):
@@ -67,9 +89,25 @@ class VAE(BaseVAE, nn.Module):
         x_prob = self.decode(z)
         return torch.distributions.Bernoulli(probs=x_prob).sample()
 
+    def __encode_convnet(self, x):
+        x = F.relu(self.conv1(x.view(-1,1,28,28)))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = x.view(-1, 512)
+        x = F.relu(self.fc1(x))
+        return self.fc2(x), self.fc22(x)
+
     def __encode_mlp(self, x):
         h1 = F.relu(self.fc1(x))
         return self.fc21(h1), self.fc22(h1)
+
+    def __decode_convnet(self, z):
+        x = F.relu(self.fc3(z))
+        x = F.relu(self.fc4(x)).view(-1,32,4,4)
+        x = F.relu(self.deconv1(x))
+        x = F.relu(self.deconv2(x))
+        x = torch.sigmoid(self.deconv3(x))
+        return x.view(-1, self.input_dim)
 
     def __decode_mlp(self, z):
         h3 = F.relu(self.fc3(z))
@@ -120,7 +158,7 @@ class VAE(BaseVAE, nn.Module):
             p(x|z)     = \prod_i Bernouilli(x_i|pi_{theta}(z_i))
             p(x = s|z) = \prod_i (pi(z_i))^x_i * (1 - pi(z_i)^(1 - x_i))"""
         return -F.binary_cross_entropy(
-            recon_x, x.view(-1, 784), reduction=reduction
+            recon_x, x.view(-1, self.input_dim), reduction=reduction
         ).sum(dim=1)
 
     def log_z(self, z):
@@ -134,16 +172,16 @@ class VAE(BaseVAE, nn.Module):
         Estimate log(p(x)) using importance sampling with q(z|x)
         """
 
-        mu, log_var = self.encode(x.view(-1, 784))
+        mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
         recon_X = self.decode(Z)
         bce = F.binary_cross_entropy(
-            recon_X, x.view(-1, 784).repeat(sample_size, 1), reduction="none"
+            recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1), reduction="none"
         )
 
         # compute densities to recover p(x)
-        logpxz = -bce.reshape(sample_size, -1, 784).sum(dim=2)  # log(p(x|z))
+        logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
         logqzx = (
             torch.distributions.MultivariateNormal(
@@ -212,6 +250,7 @@ class HVAE(VAE):
         beta_zero=0.3,
         tempering="fixed",
         model_type="mlp",
+        input_dim=784,
         latent_dim=2,
     ):
         """
@@ -225,7 +264,7 @@ class HVAE(VAE):
         model_type (str): Model type for VAR (mlp, convnet)
         latent_dim (int): Latentn dimension
         """
-        VAE.__init__(self, model_type=model_type, latent_dim=latent_dim)
+        VAE.__init__(self, model_type=model_type, input_dim=input_dim, latent_dim=latent_dim)
 
         self.name = "HVAE"
 
@@ -306,7 +345,7 @@ class HVAE(VAE):
         """
         Estimate log(p(x)) using importance sampling on q(z|x)
         """
-        mu, log_var = self.encode(x.view(-1, 784))
+        mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
         recon_X = self.decode(Z)
@@ -336,11 +375,11 @@ class HVAE(VAE):
             beta_sqrt_old = beta_sqrt
 
         bce = F.binary_cross_entropy(
-            recon_X, x.view(-1, 784).repeat(sample_size, 1), reduction="none"
+            recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1), reduction="none"
         )
 
         # compute densities to recover p(x)
-        logpxz = -bce.reshape(sample_size, -1, 784).sum(dim=2)  # log(p(x|z))
+        logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
         logqzx = (
             torch.distributions.MultivariateNormal(
@@ -384,10 +423,11 @@ class RHVAE(HVAE):
         beta_zero=0.3,
         tempering="fixed",
         model_type="mlp",
+        input_dim=784,
         latent_dim=2,
     ):
 
-        HVAE.__init__(self, n_lf, eps_lf, beta_zero, tempering, model_type, latent_dim)
+        HVAE.__init__(self, n_lf, eps_lf, beta_zero, tempering, model_type, input_dim, latent_dim)
 
         self.name = "RHVAE"
 
@@ -439,7 +479,7 @@ class RHVAE(HVAE):
         Estimate log(p(x)) using importance sampling on q(z|x)
         """
 
-        mu, log_var = self.encode(x.view(-1, 784))
+        mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
         recon_X = self.decode(Z)
@@ -472,11 +512,11 @@ class RHVAE(HVAE):
             beta_sqrt_old = beta_sqrt
 
         bce = F.binary_cross_entropy(
-            recon_X, x.view(-1, 784).repeat(sample_size, 1), reduction="none"
+            recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1), reduction="none"
         )
 
         # compute densities to recover p(x)
-        logpxz = -bce.reshape(sample_size, -1, 784).sum(dim=2)  # log(p(x|z))
+        logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
         logqzx = (
             torch.distributions.MultivariateNormal(
