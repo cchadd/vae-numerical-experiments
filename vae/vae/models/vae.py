@@ -40,13 +40,13 @@ class VAE(BaseVAE, nn.Module):
 
         elif model_type == "mlp":
             # encoder network
-            self.fc1 = nn.Linear(input_dim, 2)
-            self.fc21 = nn.Linear(2, latent_dim)
-            self.fc22 = nn.Linear(2, latent_dim)
+            self.fc1 = nn.Linear(input_dim, 400)
+            self.fc21 = nn.Linear(400, latent_dim)
+            self.fc22 = nn.Linear(400, latent_dim)
 
             # decoder network
-            self.fc3 = nn.Linear(latent_dim, 2)
-            self.fc4 = nn.Linear(2, input_dim)
+            self.fc3 = nn.Linear(latent_dim, 400)
+            self.fc4 = nn.Linear(400, input_dim)
 
             self.__encoder = self.__encode_mlp
             self.__decoder = self.__decode_mlp
@@ -418,7 +418,7 @@ class HVAE(VAE):
 class RHVAE(HVAE):
     def __init__(
         self,
-        n_lf=2,
+        n_lf=3,
         eps_lf=0.01,
         beta_zero=0.3,
         tempering="fixed",
