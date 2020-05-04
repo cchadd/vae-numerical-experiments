@@ -22,25 +22,25 @@ class VAE(BaseVAE, nn.Module):
         if model_type == "mlp":
 
             # Encoder network
-            self.fc1 = nn.Linear(input_dim, 64)
+            self.fc1 = nn.Linear(input_dim, 2)
 
             # \mu_{phi}
-            self.fc21 = nn.Linear(64, 32)
-            self.fc31 = nn.Linear(32, latent_dim)
+            # self.fc21 = nn.Linear(64, 32)
+            self.fc31 = nn.Linear(2, latent_dim)
 
             # \sigma_{\phi}
-            self.fc22 = nn.Linear(64, 32)
-            self.fc32 = nn.Linear(32, latent_dim)
+            # self.fc22 = nn.Linear(64, 32)
+            self.fc32 = nn.Linear(2, latent_dim)
 
             # \mu_{\theta}
-            self.fc41 = nn.Linear(latent_dim, 32)
-            self.fc51 = nn.Linear(32, 64)
-            self.fc61 = nn.Linear(64, input_dim)
+            self.fc4 = nn.Linear(latent_dim, 2)
+            # self.fc51 = nn.Linear(32, 64)
+            self.fc61 = nn.Linear(2, input_dim)
 
             # \sigma_{\theta}
-            self.fc42 = nn.Linear(latent_dim, 32)
-            self.fc52 = nn.Linear(32, 64)
-            self.fc62 = nn.Linear(64, input_dim)
+            # self.fc42 = nn.Linear(latent_dim, 32)
+            # self.fc52 = nn.Linear(32, 64)
+            self.fc62 = nn.Linear(2, input_dim)
  
             self.__encoder = self.__encode_mlp
             self.__decoder = self.__decode_mlp
@@ -67,7 +67,7 @@ class VAE(BaseVAE, nn.Module):
 
         std = torch.exp(0.5 * log_var)
         z, eps = self._sample_gauss(mu, std)
-        recon_mu, recon_log_var = self.decode(z)
+        recon_x = self.decode(z)
 
         #if ensure_geo:
         #    recon_log_var = recon_log_var.detach()
@@ -77,17 +77,24 @@ class VAE(BaseVAE, nn.Module):
         #    log_var = log_var.detach()
         #    recon_mu = recon_mu.detach()
 
-        return (recon_mu, recon_log_var), z, eps, mu, log_var
+        return recon_x, z, eps, mu, log_var
 
 
-    def loss_function(self, x, recon_mu, recon_log_var, mu, log_var):
+    def loss_function(self, recon_x, x, mu, log_var):
         #BCE = F.binary_cross_entropy(recon_x, x.view(-1, self.input_dim), reduction="sum")
-        LIK = -torch.distributions.MultivariateNormal(
-            loc=recon_mu,
-            covariance_matrix=torch.diag_embed(recon_log_var.exp())
-        ).log_prob(x.view(-1, self.input_dim)).sum()
+        
+        # x = x.view(-1, self.input_dim)
+
+        recon_mu, recon_log_var = recon_x
+
+        l_1 = torch.sum(recon_log_var)
+        sigma = torch.exp(0.5 * recon_log_var)
+        l_2 = torch.sum(((x - recon_mu) / sigma) ** 2)
+        LIK = 0.5 * (l_1 + l_2)
+
         KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        return LIK + 0.3 * KLD
+
+        return LIK + KLD 
 
     def encode(self, x):
         return self.__encoder(x)
@@ -103,23 +110,23 @@ class VAE(BaseVAE, nn.Module):
         return torch.distributions.MultivariateNormal(loc=recon_mu, covariance_matrix=torch.diag_embed(recon_log_var.exp())).sample()
 
     def __encode_mlp(self, x):
-        h1 = torch.tanh(self.fc1(x))
-        h21 = torch.tanh(self.fc21(h1))
-        h22 = torch.tanh(self.fc22(h1))
-        h31 = torch.tanh(self.fc31(h21))
-        h32 = torch.tanh(self.fc32(h22))
+        h1  = F.relu(self.fc1(x))
+        # h21 = torch.relu(self.fc21(h1))
+        # h22 = torch.relu(self.fc22(h1))
+        h31 = self.fc31(h1)
+        h32 = self.fc32(h1)
 
-        return F.softplus(h31), F.softplus(h32)
+        return h31, h32
 
     def __decode_mlp(self, z):
-        h41 = torch.tanh(self.fc41(z))
-        h42 = torch.tanh(self.fc42(z))
-        h51 = torch.tanh(self.fc51(h41))
-        h52 = torch.tanh(self.fc52(h42))
-        h61 = torch.tanh(self.fc61(h51))
-        h62 = torch.tanh(self.fc62(h52))
+        h4 = F.relu(self.fc4(z))
+        # h42 = torch.relu(self.fc42(z))
+        # h51 = torch.relu(self.fc51(h41))
+        # h52 = torch.relu(self.fc52(h42))
+        h61 = self.fc61(h4)
+        h62 = self.fc62(h4)
         
-        return (torch.sigmoid(h61), F.softplus(h62))
+        return h61, h62
 
 
     def _sample_gauss(self, mu, std):
@@ -131,7 +138,7 @@ class VAE(BaseVAE, nn.Module):
 
     ########## Estimate densities ##########
 
-    def get_metrics(self, recon_mu, recon_log_var, x, z, mu, log_var, sample_size=16):
+    def get_metrics(self, recon_x, x, z, mu, log_var, sample_size=16):
         """
         Estimates all metrics '(log-densities, loss, kl-dvg)
 
@@ -148,28 +155,32 @@ class VAE(BaseVAE, nn.Module):
         """
         metrics = {}
 
-        metrics["log_p_x_given_z"] = self.log_p_x_given_z(x, recon_mu, recon_log_var)
+        metrics["log_p_x_given_z"] = self.log_p_x_given_z(recon_x, x)
         metrics["log_p_z_given_x"] = self.log_p_z_given_x(
-            z, x, recon_mu, recon_log_var, sample_size=sample_size
+            z, recon_x, x, sample_size=sample_size
         )
         metrics["log_p_x"] = self.log_p_x(x, sample_size=sample_size)
         metrics["log_p_z"] = self.log_z(z)
-        metrics["lop_p_xz"] = self.log_p_xz(x, z, recon_mu, recon_log_var)
+        metrics["lop_p_xz"] = self.log_p_xz(recon_x, x, z)
         metrics["kl_prior"] = self.kl_prior(mu, log_var)
         metrics["kl_cond"] = self.kl_cond(
-            x, z, recon_mu, recon_log_var, mu, log_var, sample_size=sample_size
+            recon_x, x, z, mu, log_var, sample_size=sample_size
         )
         return metrics
 
-    def log_p_x_given_z(self, x, recon_mu, recon_log_var):
+    def log_p_x_given_z(self, recon_x, x):
         """
         Estimate the decoder's log-density modelled as follows:
             p(x|z)     = \prod_i Normal(x_i|\mu_{theta}(z_i), \sigma_{theta}(z_i))
         """
-        return torch.distributions.MultivariateNormal(
-            loc=recon_mu,
-            covariance_matrix=torch.diag_embed(recon_log_var.exp())
-        ).log_prob(x.view(-1, self.input_dim)).sum()
+        recon_mu, recon_log_var = recon_x
+
+        l_1 = (recon_log_var).sum(dim=-1)
+        sigma = recon_log_var.mul(0.5).exp()
+        l_2 = (((x - recon_mu) / sigma) ** 2).sum(dim=-1)
+        LIK = 0.5 * (l_1 + l_2)
+
+        return -LIK
 
 
     def log_z(self, z):
@@ -178,7 +189,7 @@ class VAE(BaseVAE, nn.Module):
         """
         return self.normal.log_prob(z)
 
-    def log_p_x(self, x, sample_size=16):
+    def log_p_x(self, x, sample_size=1000):
         """
         Estimate log(p(x)) using importance sampling with q(z|x)
         """
@@ -187,12 +198,9 @@ class VAE(BaseVAE, nn.Module):
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
         
-        recon_mu, recon_log_var = self.decode(Z)
+        recon_X = self.decode(Z)
 
-        lik = torch.distributions.MultivariateNormal(
-            loc=recon_mu,
-            covariance_matrix=torch.diag_embed(recon_log_var.exp())
-        ).log_prob(x.view(-1, self.input_dim).repeat(sample_size, 1))
+        lik = self.log_p_x_given_z(recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1))
 
 
         # compute densities to recover p(x)
@@ -211,20 +219,20 @@ class VAE(BaseVAE, nn.Module):
         )
         return logpx
 
-    def log_p_z_given_x(self, z, x, recon_mu, recon_log_var, sample_size=16):
+    def log_p_z_given_x(self, z, recon_x, x, sample_size=16):
         """
         Estimate log(p(z|x)) using Bayes rule and Importance Sampling for log(p(x))
         """
         logpx = self.log_p_x(x, sample_size)
-        logpxz = self.log_p_x_given_z(x, recon_mu, recon_log_var)
+        logpxz = self.log_p_x_given_z(recon_x, x)
         logpz = self.log_z(z)
         return logpxz + logpz - logpx
 
-    def log_p_xz(self, x, z, recon_mu, recon_log_var):
+    def log_p_xz(self, recon_x, x, z):
         """
         Estimate log(p(x, z)) using Bayes rule
         """
-        logpxz = self.log_p_x_given_z(x, recon_mu, recon_log_var)
+        logpxz = self.log_p_x_given_z(recon_x, x)
         logpz = self.log_z(z)
         return logpxz + logpz
 
@@ -234,7 +242,7 @@ class VAE(BaseVAE, nn.Module):
         """KL[q(z|x) || p(z)] : exact formula"""
         return -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
 
-    def kl_cond(self, x, z, recon_mu, recon_log_var, mu, log_var, sample_size=16):
+    def kl_cond(self, recon_x, x, z, mu, log_var, sample_size=16):
         """
         KL[p(z|x) || q(z|x)]
 
@@ -242,7 +250,7 @@ class VAE(BaseVAE, nn.Module):
         -----
         p(z|x) is approximated using IS on log(p(x))
         """
-        logpzx = self.log_p_z_given_x(z, x, recon_mu, recon_log_var, sample_size=sample_size)
+        logpzx = self.log_p_z_given_x(z, recon_x, x, sample_size=sample_size)
         logqzx = torch.distributions.MultivariateNormal(
             loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
         ).log_prob(z)
