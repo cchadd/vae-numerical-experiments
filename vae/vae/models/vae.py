@@ -67,6 +67,10 @@ class VAE(BaseVAE, nn.Module):
         std = torch.exp(0.5 * log_var)
         z, eps = self._sample_gauss(mu, std)
         recon_x = self.decode(z)
+        J = self.jacobian(recon_x, z)
+        # print(J)
+        # G = torch.transpose(J, 1, 2) @ J
+        # print(G.det())
         return recon_x, z, eps, mu, log_var
 
     def loss_function(self, recon_x, x, mu, log_var):
@@ -119,6 +123,21 @@ class VAE(BaseVAE, nn.Module):
         # Sample N(0, I)
         eps = torch.randn_like(std)
         return mu + eps * std, eps
+
+    def jacobian(self, recon_x, z, eps=0.0001):
+        """
+        """
+
+        _, n = z.shape
+        jacob = list()
+        for i in range(n):
+            z_eps = z.clone()
+            z_eps[:, i] += eps
+            dnet_i_dz = (self.decode(z_eps) - recon_x) / eps
+            jacob.append(dnet_i_dz)
+        
+        jacob = torch.stack(jacob, dim=2)
+        return jacob
 
     ########## Estimate densities ##########
 
@@ -393,7 +412,7 @@ class HVAE(VAE):
         )
         return logpx
 
-    def hamiltonian(self, recon_x, x, z, rho, G=None, G_inv=None, G_log_det=None):
+    def hamiltonian(self, recon_x, x, z, rho, G=None, G_log_det=None):
 
         if self.name == "HVAE":
             return -self.log_p_xz(recon_x, x, z).sum()
@@ -445,22 +464,29 @@ class RHVAE(HVAE):
         recon_x = self.decode(z)
 
         # Define a metric G(x) = \Sigma^{-1}(x)
-        G = torch.diag_embed((-log_var).exp())
-        G_inv = torch.diag_embed((log_var).exp())
-        G_log_det = torch.logdet(G)
+        # G = torch.diag_embed((-log_var).exp())
+        # G_inv = torch.diag_embed((log_var).exp())
+        # G_log_det = torch.logdet(G)
 
+        J = self.jacobian(recon_x, z)
+        self.G = torch.transpose(J, 1, 2) @ J 
+        #print(torch.det(self.G ))
+        self.G_log_det = torch.logdet(self.G)
+
+        G = self.G
+        G_log_det = self.G_log_det
 
         for k in range(self.n_lf):
 
             # Perform leapfrog steps
             rho_ = self.__leap_step_1(
-                recon_x, x, z, rho, G, G_inv, G_log_det
+                recon_x, x, z, rho, G, G_log_det
             )
             z = self.__leap_step_2(
-                recon_x, x, z, rho_, G, G_inv, G_log_det
+                recon_x, x, z, rho_, G, G_log_det
             )
             rho__ = self.__leap_step_3(
-                recon_x, x, z, rho_, G, G_inv, G_log_det
+                recon_x, x, z, rho_, G, G_log_det
             )
 
             rho = rho__
@@ -489,21 +515,20 @@ class RHVAE(HVAE):
         beta_sqrt_old = self.beta_zero_sqrt
         X_rep = x.repeat(sample_size, 1, 1, 1)
 
-        G = torch.diag_embed((-log_var).exp())
-        G_rep = torch.diag_embed((-log_var).exp()).repeat(sample_size, 1, 1)
-        G_inv_rep = torch.inverse(G).repeat(sample_size, 1, 1)
-        G_log_det_rep = torch.logdet(G).repeat(sample_size, 1, 1)
+        #G = torch.diag_embed((-log_var).exp())
+        G_rep = self.G.repeat(sample_size, 1, 1)
+        G_log_det_rep = self.G_log_det.repeat(sample_size, 1, 1)
 
         for k in range(self.n_lf):
 
             rho_ = self.__leap_step_1(
-                recon_X, X_rep, Z, rho, G_rep, G_inv_rep, G_log_det_rep
+                recon_X, X_rep, Z, rho, G_rep, G_log_det_rep
             )
             Z = self.__leap_step_2(
-                recon_X, X_rep, Z, rho_, G_rep, G_inv_rep, G_log_det_rep
+                recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
             rho__ = self.__leap_step_3(
-                recon_X, X_rep, Z, rho_, G_rep, G_inv_rep, G_log_det_rep
+                recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
 
             # tempering
@@ -520,7 +545,7 @@ class RHVAE(HVAE):
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
         logqzx = (
             torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=G
+                loc=mu, covariance_matrix=self.G
             )
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
@@ -534,13 +559,13 @@ class RHVAE(HVAE):
 
 
 
-    def __leap_step_1(self, recon_x, x, z, rho, G, G_inv, G_log_det, steps=3):
+    def __leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
         """
         Resolves eq.16 from Girolami using fixed point iterations
         """
 
         def f_(rho):
-            H = self.hamiltonian(recon_x, x, z, rho, G, G_inv, G_log_det)
+            H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
             gz = grad(H, z, retain_graph=True)[0]
             return rho - 0.5 * self.eps_lf * gz
 
@@ -549,15 +574,15 @@ class RHVAE(HVAE):
             rho_ = f_(rho_)
         return rho_
 
-    def __leap_step_2(self, recon_x, x, z, rho, G, G_inv, G_log_det, steps=3):
+    def __leap_step_2(self, recon_x, x, z, rho, G, G_log_det, steps=3):
         """
         Resolves eq.17 from Girolami using fixed point iterations
         """
-        H0 = self.hamiltonian(recon_x, x, z, rho, G, G_inv, G_log_det)
+        H0 = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
         grho_0 = grad(H0, rho)[0]
 
         def f_(z):
-            H = self.hamiltonian(recon_x, x, z, rho, G, G_inv, G_log_det)
+            H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
             grho = grad(H, rho, retain_graph=True)[0]
             return z + 0.5 * self.eps_lf * (grho_0 + grho)
 
@@ -566,7 +591,8 @@ class RHVAE(HVAE):
             z_ = f_(z_)
         return z_
 
-    def __leap_step_3(self, recon_x, x, z, rho, G, G_inv, G_log_det, steps=3):
-        H = self.hamiltonian(recon_x, x, z, rho, G, G_inv, G_log_det)
+    def __leap_step_3(self, recon_x, x, z, rho, G, G_log_det, steps=3):
+        H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
         gz = grad(H, z, create_graph=True)[0]
         return rho - 0.5 * self.eps_lf * gz
+
