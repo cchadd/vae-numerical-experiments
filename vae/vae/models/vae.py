@@ -82,11 +82,19 @@ class VAE(BaseVAE, nn.Module):
         x_prob = self.__decoder(z)
         return x_prob
 
-    def sample_img(self, n_samples=1):
+    def sample_img(self, z=None, n_samples=1):
         """
         Simulate p(x|z) to generate an image
         """
-        z = self.normal.sample(sample_shape=(n_samples,))
+
+        if z is None:
+            z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
+
+        else:
+            n_samples = z.shape[0]
+        
+        z.requires_grad_(True)
+
         x_prob = self.decode(z)
         return x_prob # torch.distributions.Bernoulli(probs=x_prob).sample()
 
@@ -572,7 +580,7 @@ class RHVAE(HVAE):
 
 
 
-class AdaptRHVAE(RHVAE):
+class AdaRHVAE(RHVAE):
 
     def __init__(
         self,
@@ -612,8 +620,10 @@ class AdaptRHVAE(RHVAE):
 
         if self.metric == "jacobian":
             # Define metric G(z) = Jac(g(z))
-            J = self.jacobian(recon_x, z)
-            self.G = torch.transpose(J, 1, 2) @ J 
+            # J = self.jacobian(recon_x, z)
+            J_bis = self.jacobian_bis(recon_x, z)
+
+            self.G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim)
             #print(torch.det(self.G ))
             self.G_log_det = torch.logdet(self.G)
 
@@ -708,6 +718,14 @@ class AdaptRHVAE(RHVAE):
 
     def jacobian(self, recon_x, z, eps=0.0001):
         """
+        Compute the Jacobian matrix of the output of neural net w.r.t. the inputs
+        using finite differences scheme
+
+        Inputs:
+        -------
+        recon_x (Tensor): The output of the network [Batch_size, output_size]
+        z (Tensor): The input [Batch_size, latent_dim]
+        eps (float): The precision used in the finite difference scheme
         """
 
         _, n = z.shape
@@ -722,14 +740,47 @@ class AdaptRHVAE(RHVAE):
         return jacob
 
 
-    def sample_img(self, n_samples=1, leap_step=True):
-        z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
+    def jacobian_bis(self, recon_x, z):
+        """
+        Compute the Jacobian matrix of the output of neural net w.r.t. the inputs
+        using PyTorch autograd
+
+        Inputs:
+        -------
+        recon_x (Tensor): The output of the network [Batch_size, output_size]
+        z (Tensor): The input [Batch_size, latent_dim]
+        """
+        _, n = recon_x.shape
+        jacobian = list()
+        for i in range(n):
+            v = torch.zeros_like(recon_x)
+            v[:, i] = 1.
+            dy_i_dx = grad(recon_x,
+                           z,
+                           grad_outputs=v,
+                           retain_graph=True,
+                           create_graph=True,
+                           allow_unused=True)[0]  # shape [B, N]
+            jacobian.append(dy_i_dx)
+
+        jacobian = torch.stack(jacobian, dim=2).requires_grad_()
+
+        return torch.transpose(jacobian, 1, 2)
+
+
+    def sample_img(self, z=None, n_samples=1, leap_step=True):
+        if z is None:
+            z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
+
+        else:
+            n_samples = z.shape[0]
+        
         z.requires_grad_(True)
         recon_x = self.decode(z)
         x = torch.distributions.Bernoulli(probs=recon_x).sample()
-        
-        J = self.jacobian(recon_x, z)
-        G = torch.transpose(J, 1, 2) @ J 
+
+        J = self.jacobian_bis(recon_x, z)
+        G = torch.transpose(J, 1, 2) @ J + 1e-7 * torch.eye(self.latent_dim)
         G_log_det = torch.logdet(G)
 
 
