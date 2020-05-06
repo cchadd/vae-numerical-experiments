@@ -736,13 +736,13 @@ class AdaptRHVAE(RHVAE):
             for k in range(self.n_lf):
 
                 # Perform leapfrog steps
-                rho_ = self.__leap_step_1(
+                rho_ = self.leap_step_1(
                     recon_x, x, z, rho, G, G_log_det
                 )
-                z = self.__leap_step_2(
+                z = self.leap_step_2(
                     recon_x, x, z, rho_, G, G_log_det
                 )
-                rho__ = self.__leap_step_3(
+                rho__ = self.leap_step_3(
                     recon_x, x, z, rho_, G, G_log_det
                 )
 
