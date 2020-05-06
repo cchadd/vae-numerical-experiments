@@ -67,10 +67,6 @@ class VAE(BaseVAE, nn.Module):
         std = torch.exp(0.5 * log_var)
         z, eps = self._sample_gauss(mu, std)
         recon_x = self.decode(z)
-        J = self.jacobian(recon_x, z)
-        # print(J)
-        # G = torch.transpose(J, 1, 2) @ J
-        # print(G.det())
         return recon_x, z, eps, mu, log_var
 
     def loss_function(self, recon_x, x, mu, log_var):
@@ -86,12 +82,13 @@ class VAE(BaseVAE, nn.Module):
         x_prob = self.__decoder(z)
         return x_prob
 
-    def sample_img(self, z):
+    def sample_img(self, n_samples=1):
         """
         Simulate p(x|z) to generate an image
         """
+        z = self.normal.sample(sample_shape=(n_samples,))
         x_prob = self.decode(z)
-        return torch.distributions.Bernoulli(probs=x_prob).sample()
+        return x_prob # torch.distributions.Bernoulli(probs=x_prob).sample()
 
     def __encode_convnet(self, x):
         x = F.relu(self.conv1(x.view(-1,1,28,28)))
@@ -123,21 +120,6 @@ class VAE(BaseVAE, nn.Module):
         # Sample N(0, I)
         eps = torch.randn_like(std)
         return mu + eps * std, eps
-
-    def jacobian(self, recon_x, z, eps=0.0001):
-        """
-        """
-
-        _, n = z.shape
-        jacob = list()
-        for i in range(n):
-            z_eps = z.clone()
-            z_eps[:, i] += eps
-            dnet_i_dz = (self.decode(z_eps) - recon_x) / eps
-            jacob.append(dnet_i_dz)
-        
-        jacob = torch.stack(jacob, dim=2)
-        return jacob
 
     ########## Estimate densities ##########
 
@@ -440,6 +422,163 @@ class RHVAE(HVAE):
         n_lf=3,
         eps_lf=0.01,
         beta_zero=0.3,
+        tempering="fixed",
+        model_type="mlp",
+        input_dim=784,
+        latent_dim=2,
+    ):
+
+        HVAE.__init__(self, n_lf, eps_lf, beta_zero, tempering, model_type, input_dim, latent_dim)
+
+        self.name = "RHVAE"
+
+    def forward(self, x):
+        """
+        Perform Riemann Hamiltionian Importance Sampling
+        """
+
+        recon_x, z0, _, mu, log_var = self.vae_forward(x)
+        gamma = torch.randn_like(z0, device=self.device)
+        rho = gamma / self.beta_zero_sqrt
+        z = z0
+        beta_sqrt_old = self.beta_zero_sqrt
+
+        recon_x = self.decode(z)
+
+        # Define a metric G(x) = \Sigma^{-1}(x)
+        self.G = torch.diag_embed((-log_var).exp())
+        self.G_log_det = torch.logdet(self.G)
+
+        G = self.G
+        G_log_det = self.G_log_det
+
+
+        for k in range(self.n_lf):
+
+            # Perform leapfrog steps
+            rho_ = self.leap_step_1(
+                recon_x, x, z, rho, G, G_log_det
+            )
+            z = self.leap_step_2(
+                recon_x, x, z, rho_, G, G_log_det
+            )
+            rho__ = self.leap_step_3(
+                recon_x, x, z, rho_, G, G_log_det
+            )
+
+            rho = rho__
+
+            # tempering steps
+            beta_sqrt = self._tempering(k)
+            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            beta_sqrt_old = beta_sqrt
+
+        
+        return recon_x, z, z0, rho, gamma, mu, log_var
+
+
+    def log_p_x(self, x, sample_size=16):
+        """
+        Estimate log(p(x)) using importance sampling on q(z|x)
+        """
+
+        mu, log_var = self.encode(x.view(-1, self.input_dim))
+        Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
+        Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
+        recon_X = self.decode(Z)
+
+        gamma = torch.randn_like(Z, device=self.device)
+        rho = gamma / self.beta_zero_sqrt
+        beta_sqrt_old = self.beta_zero_sqrt
+        X_rep = x.repeat(sample_size, 1, 1, 1)
+
+        #G = torch.diag_embed((-log_var).exp())
+        G_rep = self.G.repeat(sample_size, 1, 1)
+        G_log_det_rep = self.G_log_det.repeat(sample_size, 1, 1)
+
+        for k in range(self.n_lf):
+
+            rho_ = self.leap_step_1(
+                recon_X, X_rep, Z, rho, G_rep, G_log_det_rep
+            )
+            Z = self.leap_step_2(
+                recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
+            )
+            rho__ = self.leap_step_3(
+                recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
+            )
+
+            # tempering
+            beta_sqrt = self._tempering(k)
+            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            beta_sqrt_old = beta_sqrt
+
+        bce = F.binary_cross_entropy(
+            recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1), reduction="none"
+        )
+
+        # compute densities to recover p(x)
+        logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
+        logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
+        logqzx = (
+            torch.distributions.MultivariateNormal(
+                loc=mu, covariance_matrix=self.G
+            )
+            .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
+            .reshape(sample_size, -1)
+        )  # log(q(z|x))
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(
+            torch.Tensor([sample_size]).to(self.device)
+        )
+        return logpx
+
+
+    def leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
+        """
+        Resolves eq.16 from Girolami using fixed point iterations
+        """
+
+        def f_(rho):
+            H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
+            gz = grad(H, z, retain_graph=True)[0]
+            return rho - 0.5 * self.eps_lf * gz
+
+        rho_ = rho.clone()
+        for _ in range(steps):
+            rho_ = f_(rho_)
+        return rho_
+
+    def leap_step_2(self, recon_x, x, z, rho, G, G_log_det, steps=3):
+        """
+        Resolves eq.17 from Girolami using fixed point iterations
+        """
+        H0 = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
+        grho_0 = grad(H0, rho)[0]
+
+        def f_(z):
+            H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
+            grho = grad(H, rho, retain_graph=True)[0]
+            return z + 0.5 * self.eps_lf * (grho_0 + grho)
+
+        z_ = z.clone()
+        for _ in range(steps):
+            z_ = f_(z_)
+        return z_
+
+    def leap_step_3(self, recon_x, x, z, rho, G, G_log_det, steps=3):
+        H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
+        gz = grad(H, z, create_graph=True)[0]
+        return rho - 0.5 * self.eps_lf * gz
+
+
+
+class AdaptRHVAE(RHVAE):
+
+    def __init__(
+        self,
+        n_lf=3,
+        eps_lf=0.01,
+        beta_zero=0.3,
         metric="sigma",
         tempering="fixed",
         model_type="mlp",
@@ -490,13 +629,13 @@ class RHVAE(HVAE):
         for k in range(self.n_lf):
 
             # Perform leapfrog steps
-            rho_ = self.__leap_step_1(
+            rho_ = self.leap_step_1(
                 recon_x, x, z, rho, G, G_log_det
             )
-            z = self.__leap_step_2(
+            z = self.leap_step_2(
                 recon_x, x, z, rho_, G, G_log_det
             )
-            rho__ = self.__leap_step_3(
+            rho__ = self.leap_step_3(
                 recon_x, x, z, rho_, G, G_log_det
             )
 
@@ -532,13 +671,13 @@ class RHVAE(HVAE):
 
         for k in range(self.n_lf):
 
-            rho_ = self.__leap_step_1(
+            rho_ = self.leap_step_1(
                 recon_X, X_rep, Z, rho, G_rep, G_log_det_rep
             )
-            Z = self.__leap_step_2(
+            Z = self.leap_step_2(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
-            rho__ = self.__leap_step_3(
+            rho__ = self.leap_step_3(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
 
@@ -567,40 +706,53 @@ class RHVAE(HVAE):
         return logpx
 
 
-    def __leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
+    def jacobian(self, recon_x, z, eps=0.0001):
         """
-        Resolves eq.16 from Girolami using fixed point iterations
         """
 
-        def f_(rho):
-            H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
-            gz = grad(H, z, retain_graph=True)[0]
-            return rho - 0.5 * self.eps_lf * gz
+        _, n = z.shape
+        jacob = list()
+        for i in range(n):
+            z_eps = z.clone()
+            z_eps[:, i] += eps
+            dnet_i_dz = (self.decode(z_eps) - recon_x) / eps
+            jacob.append(dnet_i_dz)
+        
+        jacob = torch.stack(jacob, dim=2)
+        return jacob
 
-        rho_ = rho.clone()
-        for _ in range(steps):
-            rho_ = f_(rho_)
-        return rho_
 
-    def __leap_step_2(self, recon_x, x, z, rho, G, G_log_det, steps=3):
-        """
-        Resolves eq.17 from Girolami using fixed point iterations
-        """
-        H0 = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
-        grho_0 = grad(H0, rho)[0]
+    def sample_img(self, n_samples=1, leap_step=True):
+        z = self.normal.sample(sample_shape=(n_samples,))
+        recon_x = self.decode(z)
+        x = torch.distributions.Bernoulli(probs=recon_x).sample(sample_shape=(n_samples,))
 
-        def f_(z):
-            H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
-            grho = grad(H, rho, retain_graph=True)[0]
-            return z + 0.5 * self.eps_lf * (grho_0 + grho)
+        J = self.jacobian(recon_x, z)
+        G = torch.transpose(J, 1, 2) @ J 
+        G_log_det = torch.logdet(self.G)
 
-        z_ = z.clone()
-        for _ in range(steps):
-            z_ = f_(z_)
-        return z_
 
-    def __leap_step_3(self, recon_x, x, z, rho, G, G_log_det, steps=3):
-        H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
-        gz = grad(H, z, create_graph=True)[0]
-        return rho - 0.5 * self.eps_lf * gz
+        if leap_step:
+            for k in range(self.n_lf):
 
+                # Perform leapfrog steps
+                rho_ = self.__leap_step_1(
+                    recon_x, x, z, rho, G, G_log_det
+                )
+                z = self.__leap_step_2(
+                    recon_x, x, z, rho_, G, G_log_det
+                )
+                rho__ = self.__leap_step_3(
+                    recon_x, x, z, rho_, G, G_log_det
+                )
+
+                rho = rho__
+
+                # tempering steps
+                beta_sqrt = self._tempering(k)
+                rho = (beta_sqrt / beta_sqrt_old) * rho__
+                beta_sqrt_old = beta_sqrt
+
+            recon_x = self.decode(z)
+
+        return recon_x
