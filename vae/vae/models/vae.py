@@ -723,9 +723,9 @@ class AdaptRHVAE(RHVAE):
 
 
     def sample_img(self, n_samples=1, leap_step=True):
-        z = self.normal.sample(sample_shape=(n_samples,))
+        z = self.normal.sample(sample_shape=(n_samples,)).requires_grad_(True)
         recon_x = self.decode(z)
-        x = torch.distributions.Bernoulli(probs=recon_x).sample(sample_shape=(n_samples,))
+        x = torch.distributions.Bernoulli(probs=recon_x).sample()
 
         J = self.jacobian(recon_x, z)
         G = torch.transpose(J, 1, 2) @ J 
@@ -733,6 +733,11 @@ class AdaptRHVAE(RHVAE):
 
 
         if leap_step:
+
+            gamma = torch.randn_like(z, device=self.device)
+            beta_sqrt_old = self.beta_zero_sqrt
+            rho = gamma / self.beta_zero_sqrt
+            
             for k in range(self.n_lf):
 
                 # Perform leapfrog steps
