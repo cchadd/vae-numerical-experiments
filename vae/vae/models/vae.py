@@ -723,10 +723,11 @@ class AdaptRHVAE(RHVAE):
 
 
     def sample_img(self, n_samples=1, leap_step=True):
-        z = self.normal.sample(sample_shape=(n_samples,)).requires_grad_(True)
+        z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
+        z.requires_grad_(True)
         recon_x = self.decode(z)
         x = torch.distributions.Bernoulli(probs=recon_x).sample()
-
+        
         J = self.jacobian(recon_x, z)
         G = torch.transpose(J, 1, 2) @ J 
         G_log_det = torch.logdet(G)
