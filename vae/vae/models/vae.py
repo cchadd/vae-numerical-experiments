@@ -621,10 +621,8 @@ class AdaRHVAE(RHVAE):
         if self.metric == "jacobian":
             # Define metric G(z) = Jac(g(z))
             # J = self.jacobian(recon_x, z)
-            J_bis = self.jacobian_bis(recon_x, z)
-
-            self.G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim)
-            #print(torch.det(self.G ))
+            J_bis = self.jacobian(recon_x, z)
+            self.G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim).to(self.device)
             self.G_log_det = torch.logdet(self.G)
 
         elif self.metric == "sigma":
@@ -645,12 +643,18 @@ class AdaRHVAE(RHVAE):
             z = self.leap_step_2(
                 recon_x, x, z, rho_, G, G_log_det
             )
+
+            if self.metric == 'jacobian':
+                recon_x_bis = self.decode(z)
+                J_bis = self.jacobian(recon_x_bis, z)
+                G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim).to(self.device)
+                G_log_det = torch.logdet(G)
+
             rho__ = self.leap_step_3(
                 recon_x, x, z, rho_, G, G_log_det
             )
 
             rho = rho__
-
             # tempering steps
             beta_sqrt = self._tempering(k)
             rho = (beta_sqrt / beta_sqrt_old) * rho__
@@ -668,6 +672,7 @@ class AdaRHVAE(RHVAE):
         mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
+        Z.requires_grad_(True)
         recon_X = self.decode(Z)
 
         gamma = torch.randn_like(Z, device=self.device)
@@ -676,8 +681,10 @@ class AdaRHVAE(RHVAE):
         X_rep = x.repeat(sample_size, 1, 1, 1)
 
         #G = torch.diag_embed((-log_var).exp())
-        G_rep = self.G.repeat(sample_size, 1, 1)
-        G_log_det_rep = self.G_log_det.repeat(sample_size, 1, 1)
+        J_rep = self.jacobian(recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim))
+        
+        G_rep = torch.transpose(J_rep, 1, 2) @ J_rep + 1e-7 * torch.eye(self.latent_dim).to(self.device)
+        G_log_det_rep = torch.logdet(G_rep)
 
         for k in range(self.n_lf):
 
@@ -687,6 +694,13 @@ class AdaRHVAE(RHVAE):
             Z = self.leap_step_2(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
+
+            # recon_X_bis = self.decode(Z)
+            # J_rep = self.jacobian(recon_X_bis, Z)
+            # G_rep = torch.transpose(J_rep, 1, 2) @ J_rep + 1e-7 * torch.eye(self.latent_dim).to(self.device)
+            # print(G_rep)
+            # G_log_det_rep = torch.logdet(G_rep)
+
             rho__ = self.leap_step_3(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
@@ -699,13 +713,12 @@ class AdaRHVAE(RHVAE):
         bce = F.binary_cross_entropy(
             recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1), reduction="none"
         )
-
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
         logqzx = (
             torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=self.G
+                loc=mu, covariance_matrix=G_rep.reshape(sample_size, -1, self.latent_dim, self.latent_dim)
             )
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
@@ -716,7 +729,7 @@ class AdaRHVAE(RHVAE):
         return logpx
 
 
-    def jacobian(self, recon_x, z, eps=0.0001):
+    def jacobian(self, recon_x, z, eps=0.000001):
         """
         Compute the Jacobian matrix of the output of neural net w.r.t. the inputs
         using finite differences scheme
@@ -750,6 +763,7 @@ class AdaRHVAE(RHVAE):
         recon_x (Tensor): The output of the network [Batch_size, output_size]
         z (Tensor): The input [Batch_size, latent_dim]
         """
+        print(z.shape)
         _, n = recon_x.shape
         jacobian = list()
         for i in range(n):
@@ -762,7 +776,6 @@ class AdaRHVAE(RHVAE):
                            create_graph=True,
                            allow_unused=True)[0]  # shape [B, N]
             jacobian.append(dy_i_dx)
-
         jacobian = torch.stack(jacobian, dim=2).requires_grad_()
 
         return torch.transpose(jacobian, 1, 2)
@@ -779,8 +792,8 @@ class AdaRHVAE(RHVAE):
         recon_x = self.decode(z)
         x = torch.distributions.Bernoulli(probs=recon_x).sample()
 
-        J = self.jacobian_bis(recon_x, z)
-        G = torch.transpose(J, 1, 2) @ J + 1e-7 * torch.eye(self.latent_dim)
+        J = self.jacobian(recon_x, z)
+        G = torch.transpose(J, 1, 2) @ J + 1e-7 * torch.eye(self.latent_dim).to(self.device)
         G_log_det = torch.logdet(G)
 
 
