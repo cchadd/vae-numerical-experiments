@@ -440,6 +440,7 @@ class RHVAE(HVAE):
         n_lf=3,
         eps_lf=0.01,
         beta_zero=0.3,
+        metric="sigma",
         tempering="fixed",
         model_type="mlp",
         input_dim=784,
@@ -449,6 +450,13 @@ class RHVAE(HVAE):
         HVAE.__init__(self, n_lf, eps_lf, beta_zero, tempering, model_type, input_dim, latent_dim)
 
         self.name = "RHVAE"
+
+        assert metric in [
+            "sigma",
+            "jacobian"
+        ], f"The metric {metric} is not handled by the RHVAE"
+
+        self.metric = metric
 
     def forward(self, x):
         """
@@ -463,15 +471,18 @@ class RHVAE(HVAE):
 
         recon_x = self.decode(z)
 
-        # Define a metric G(x) = \Sigma^{-1}(x)
-        # G = torch.diag_embed((-log_var).exp())
-        # G_inv = torch.diag_embed((log_var).exp())
-        # G_log_det = torch.logdet(G)
+        if self.metric == "jacobian":
+            # Define metric G(z) = Jac(g(z))
+            J = self.jacobian(recon_x, z)
+            self.G = torch.transpose(J, 1, 2) @ J 
+            #print(torch.det(self.G ))
+            self.G_log_det = torch.logdet(self.G)
 
-        J = self.jacobian(recon_x, z)
-        self.G = torch.transpose(J, 1, 2) @ J 
-        #print(torch.det(self.G ))
-        self.G_log_det = torch.logdet(self.G)
+        elif self.metric == "sigma":
+            # Define a metric G(x) = \Sigma^{-1}(x)
+            self.G = torch.diag_embed((-log_var).exp())
+            self.G_log_det = torch.logdet(self.G)
+
 
         G = self.G
         G_log_det = self.G_log_det
@@ -554,9 +565,6 @@ class RHVAE(HVAE):
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
-
-
-
 
 
     def __leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
