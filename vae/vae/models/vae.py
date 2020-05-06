@@ -729,7 +729,7 @@ class AdaptRHVAE(RHVAE):
 
         J = self.jacobian(recon_x, z)
         G = torch.transpose(J, 1, 2) @ J 
-        G_log_det = torch.logdet(self.G)
+        G_log_det = torch.logdet(G)
 
 
         if leap_step:
