@@ -17,6 +17,7 @@ class ModelTrainer(BaseTrainer):
         n_epochs=15,
         seed=1,
         record_metrics=True,
+        only_train=False,
         verbose=True,
     ):
         """
@@ -53,6 +54,8 @@ class ModelTrainer(BaseTrainer):
         random.seed(seed)
         np.random.seed(seed)
 
+        self.only_train = only_train
+
         assert model.name in [
             "VAE",
             "HVAE",
@@ -74,7 +77,8 @@ class ModelTrainer(BaseTrainer):
     def train(self):
         for epoch in range(self.n_epochs):
             self.__train_epoch(epoch)
-            self.__test_epoch(epoch)
+            if not self.only_train:
+                self.__test_epoch(epoch)
 
     def __train_epoch(self, epoch):
         self.model.train()
@@ -103,6 +107,7 @@ class ModelTrainer(BaseTrainer):
                     loss = self.model.loss_function(
                         recon_batch, data, z0, z, rho, gamma, mu, log_var
                     )
+                    # print(loss)
 
             elif self.model.archi == "Gauss":
 

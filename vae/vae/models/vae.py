@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.autograd.functional import jacobian as jac
 from torchvision import datasets, transforms
 from torch.autograd import Variable, grad
 from torchvision.utils import save_image
 from .base import BaseVAE
-
+import copy
 
 class VAE(BaseVAE, nn.Module):
     def __init__(self, model_type="mlp", input_dim=784, latent_dim=2):
@@ -131,7 +132,7 @@ class VAE(BaseVAE, nn.Module):
 
     ########## Estimate densities ##########
 
-    def get_metrics(self, recon_x, x, z, mu, log_var, sample_size=16):
+    def get_metrics(self, recon_x, x, z, mu, log_var, sample_size=10):
         """
         Estimates all metrics '(log-densities, loss, kl-dvg)
 
@@ -176,7 +177,7 @@ class VAE(BaseVAE, nn.Module):
         """
         return self.normal.log_prob(z)
 
-    def log_p_x(self, x, sample_size=16):
+    def log_p_x(self, x, sample_size=10):
         """
         Estimate log(p(x)) using importance sampling with q(z|x)
         """
@@ -204,7 +205,7 @@ class VAE(BaseVAE, nn.Module):
         )
         return logpx
 
-    def log_p_z_given_x(self, z, recon_x, x, sample_size=16):
+    def log_p_z_given_x(self, z, recon_x, x, sample_size=10):
         """
         Estimate log(p(z|x)) using Bayes rule and Importance Sampling for log(p(x))
         """
@@ -227,7 +228,7 @@ class VAE(BaseVAE, nn.Module):
         """KL[q(z|y) || p(z)] : exact formula"""
         return -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
 
-    def kl_cond(self, recon_x, x, z, mu, log_var, sample_size=16):
+    def kl_cond(self, recon_x, x, z, mu, log_var, sample_size=10):
         """
         KL[p(z|x) || q(z|x)]
 
@@ -347,10 +348,9 @@ class HVAE(VAE):
 
         logrho0 = self.normal.log_prob(gamma)
         logq = logqzx + logrho0
-
         return -(logp - logq).mean()
 
-    def log_p_x(self, x, sample_size=16):
+    def log_p_x(self, x, sample_size=10):
         """
         Estimate log(p(x)) using importance sampling on q(z|x)
         """
@@ -454,6 +454,8 @@ class RHVAE(HVAE):
         recon_x = self.decode(z)
 
         # Define a metric G(x) = \Sigma^{-1}(x)
+        # G = self.fisher(recon_x, z, n_samples=100)
+        self.fisher(recon_x, z)
         self.G = torch.diag_embed((-log_var).exp())
         self.G_log_det = torch.logdet(self.G)
 
@@ -485,7 +487,7 @@ class RHVAE(HVAE):
         return recon_x, z, z0, rho, gamma, mu, log_var
 
 
-    def log_p_x(self, x, sample_size=16):
+    def log_p_x(self, x, sample_size=10):
         """
         Estimate log(p(x)) using importance sampling on q(z|x)
         """
@@ -540,6 +542,39 @@ class RHVAE(HVAE):
         )
         return logpx
 
+    def fisher(self, recon_x, z, n_samples=1):
+        """
+        Compute estimate of the Fisher information matrix using MC
+        """
+        z_ = z.clone().detach()
+        noutputs = recon_x.shape[1]
+        z_ = z_.unsqueeze(1) # b, 1 ,in_dim
+        n = z_.size()[0]
+        z_ = z_.repeat(1, noutputs, 1) # b, out_dim, in_dim
+        z_.requires_grad_(True)
+        recon_x_ = self.decode(z_)
+
+        input_val = torch.eye(noutputs).reshape(1,noutputs, noutputs).repeat(n, 1, 1)
+        
+        jac = grad(recon_x_, z_, grad_outputs=input_val)[0]
+
+        # Estimate susing MC sampling
+        x_samples = torch.distributions.Bernoulli(probs=recon_x).sample(sample_shape=(n_samples,)).transpose(0, 1)
+
+        #print(x_samples.shape, jac.shape, recon_x.shape)
+
+        # Compute derivative of the log proba \partial log p(x|z) 
+        d_z = torch.transpose(jac, 1, 2) @ (- (1 - x_samples) / (1 - recon_x.unsqueeze(1)) + x_samples / recon_x.unsqueeze(1)).transpose(1, 2)
+        d_z = d_z.transpose(1, 2).unsqueeze(-1)
+
+        # Compute [\nabla \partial log p(x|x) \nabla \partial log p(x|z)^{\top}]
+        d_z_mat = d_z @ torch.transpose(d_z, 2, 3)
+        #print(d_z_mat.shape)
+
+        # Compute expectation
+        fisher = d_z_mat.mean(dim=1)
+
+        return fisher
 
     def leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
         """
@@ -600,7 +635,8 @@ class AdaRHVAE(RHVAE):
 
         assert metric in [
             "sigma",
-            "jacobian"
+            "jacobian",
+            "fisher"
         ], f"The metric {metric} is not handled by the RHVAE"
 
         self.metric = metric
@@ -620,10 +656,16 @@ class AdaRHVAE(RHVAE):
 
         if self.metric == "jacobian":
             # Define metric G(z) = Jac(g(z))
-            # J = self.jacobian(recon_x, z)
-            J_bis = self.jacobian(recon_x, z)
-            self.G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim).to(self.device)
+            J_bis = self.jacobian_bis(recon_x, z)
+ 
+            self.G = torch.transpose(J_bis, 1, 2) @ J_bis
             self.G_log_det = torch.logdet(self.G)
+
+
+        elif self.metric == "fisher":
+            self.G = self.fisher(recon_x, z, n_samples=100)
+            self.G_log_det = torch.logdet(self.G)
+
 
         elif self.metric == "sigma":
             # Define a metric G(x) = \Sigma^{-1}(x)
@@ -644,11 +686,18 @@ class AdaRHVAE(RHVAE):
                 recon_x, x, z, rho_, G, G_log_det
             )
 
-            if self.metric == 'jacobian':
-                recon_x_bis = self.decode(z)
-                J_bis = self.jacobian(recon_x_bis, z)
-                G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim).to(self.device)
+            if self.metric == 'fisher':
+                recon_x = self.decode(z)
+                G = self.fisher(recon_x, z, n_samples=100)
                 G_log_det = torch.logdet(G)
+
+
+            if self.metric == 'jacobian':
+                recon_x = self.decode(z)
+                J_bis = self.jacobian_bis(recon_x, z)
+                G = torch.transpose(J_bis, 1, 2) @ J_bis
+                G_log_det = torch.logdet(G)
+
 
             rho__ = self.leap_step_3(
                 recon_x, x, z, rho_, G, G_log_det
@@ -664,7 +713,7 @@ class AdaRHVAE(RHVAE):
         return recon_x, z, z0, rho, gamma, mu, log_var
 
 
-    def log_p_x(self, x, sample_size=16):
+    def log_p_x(self, x, sample_size=10):
         """
         Estimate log(p(x)) using importance sampling on q(z|x)
         """
@@ -680,11 +729,19 @@ class AdaRHVAE(RHVAE):
         beta_sqrt_old = self.beta_zero_sqrt
         X_rep = x.repeat(sample_size, 1, 1, 1)
 
-        #G = torch.diag_embed((-log_var).exp())
-        J_rep = self.jacobian(recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim))
-        
-        G_rep = torch.transpose(J_rep, 1, 2) @ J_rep + 1e-7 * torch.eye(self.latent_dim).to(self.device)
-        G_log_det_rep = torch.logdet(G_rep)
+        if self.metric == 'jacobian':
+            J_rep = self.jacobian_bis(recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim))
+            G_rep = torch.transpose(J_rep, 1, 2) @ J_rep
+            G_log_det_rep = torch.logdet(G_rep)
+
+        elif self.metric == 'sigma':
+            G = torch.diag_embed((-log_var).exp())
+            G_log_det_rep = torch.logdet(G)
+
+        elif self.metric == 'fisher':
+            G_rep = self.fisher(recon_X, Z, n_samples=100)
+            G_log_det_rep = torch.logdet(G_rep)
+
 
         for k in range(self.n_lf):
 
@@ -694,12 +751,6 @@ class AdaRHVAE(RHVAE):
             Z = self.leap_step_2(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
-
-            # recon_X_bis = self.decode(Z)
-            # J_rep = self.jacobian(recon_X_bis, Z)
-            # G_rep = torch.transpose(J_rep, 1, 2) @ J_rep + 1e-7 * torch.eye(self.latent_dim).to(self.device)
-            # print(G_rep)
-            # G_log_det_rep = torch.logdet(G_rep)
 
             rho__ = self.leap_step_3(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
@@ -716,6 +767,7 @@ class AdaRHVAE(RHVAE):
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
+
         logqzx = (
             torch.distributions.MultivariateNormal(
                 loc=mu, covariance_matrix=G_rep.reshape(sample_size, -1, self.latent_dim, self.latent_dim)
@@ -729,7 +781,42 @@ class AdaRHVAE(RHVAE):
         return logpx
 
 
-    def jacobian(self, recon_x, z, eps=0.000001):
+    def fisher(self, recon_x, z, n_samples=1):
+        """
+        Compute estimate of the Fisher information matrix using MC
+        """
+        z_ = z.clone().detach()
+        noutputs = recon_x.shape[1]
+        z_ = z_.unsqueeze(1) # b, 1 ,in_dim
+        n = z_.size()[0]
+        z_ = z_.repeat(1, noutputs, 1) # b, out_dim, in_dim
+        z_.requires_grad_(True)
+        recon_x_ = self.decode(z_)
+
+        input_val = torch.eye(noutputs).reshape(1,noutputs, noutputs).repeat(n, 1, 1)
+        
+        jac = grad(recon_x_, z_, grad_outputs=input_val)[0]
+
+        # Estimate susing MC sampling
+        x_samples = torch.distributions.Bernoulli(probs=recon_x).sample(sample_shape=(n_samples,)).transpose(0, 1)
+
+        #print(x_samples.shape, jac.shape, recon_x.shape)
+
+        # Compute derivative of the log proba \partial log p(x|z) 
+        d_z = torch.transpose(jac, 1, 2) @ (- (1 - x_samples) / (1 - recon_x.unsqueeze(1)) + x_samples / recon_x.unsqueeze(1)).transpose(1, 2)
+        d_z = d_z.transpose(1, 2).unsqueeze(-1)
+
+        # Compute [\nabla \partial log p(x|x) \nabla \partial log p(x|z)^{\top}]
+        d_z_mat = d_z @ torch.transpose(d_z, 2, 3)
+        #print(d_z_mat.shape)
+
+        # Compute expectation
+        fisher = d_z_mat.mean(dim=1)
+
+        return fisher + 1e-6 * torch.eye(self.latent_dim)
+
+
+    def jacobian(self, recon_x, z, eps=0.00001):
         """
         Compute the Jacobian matrix of the output of neural net w.r.t. the inputs
         using finite differences scheme
@@ -763,25 +850,23 @@ class AdaRHVAE(RHVAE):
         recon_x (Tensor): The output of the network [Batch_size, output_size]
         z (Tensor): The input [Batch_size, latent_dim]
         """
-        print(z.shape)
-        _, n = recon_x.shape
-        jacobian = list()
-        for i in range(n):
-            v = torch.zeros_like(recon_x)
-            v[:, i] = 1.
-            dy_i_dx = grad(recon_x,
-                           z,
-                           grad_outputs=v,
-                           retain_graph=True,
-                           create_graph=True,
-                           allow_unused=True)[0]  # shape [B, N]
-            jacobian.append(dy_i_dx)
-        jacobian = torch.stack(jacobian, dim=2).requires_grad_()
+        z_ = z.clone().detach()
 
-        return torch.transpose(jacobian, 1, 2)
+        noutputs = recon_x.shape[1]
+        z_ = z_.unsqueeze(1) # b, 1 ,in_dim
+        n = z_.size()[0]
+        z_ = z_.repeat(1, noutputs, 1) # b, out_dim, in_dim
+        z_.requires_grad_(True)
+        recon_x_ = self.decode(z_)
+
+        input_val = torch.eye(noutputs).reshape(1,noutputs, noutputs).repeat(n, 1, 1)
+
+        jac = grad(recon_x_, z_, grad_outputs=input_val)[0]
+
+        return jac
 
 
-    def sample_img(self, z=None, n_samples=1, leap_step=True):
+    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
         if z is None:
             z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
 
@@ -792,18 +877,22 @@ class AdaRHVAE(RHVAE):
         recon_x = self.decode(z)
         x = torch.distributions.Bernoulli(probs=recon_x).sample()
 
-        J = self.jacobian(recon_x, z)
-        G = torch.transpose(J, 1, 2) @ J + 1e-7 * torch.eye(self.latent_dim).to(self.device)
-        G_log_det = torch.logdet(G)
+        if self.metric == 'jacobian':
+            J = self.jacobian_bis(recon_x, z)
+            G = torch.transpose(J, 1, 2) @ J
+            G_log_det = torch.logdet(G)
 
+        elif self.metric == 'fisher':
+            G = self.fisher(recon_x, z, n_samples=100)
+            G_log_det = torch.logdet(G)
 
         if leap_step:
 
             gamma = torch.randn_like(z, device=self.device)
             beta_sqrt_old = self.beta_zero_sqrt
             rho = gamma / self.beta_zero_sqrt
-            
-            for k in range(self.n_lf):
+
+            for k in range(leap_nbr):
 
                 # Perform leapfrog steps
                 rho_ = self.leap_step_1(
@@ -812,6 +901,20 @@ class AdaRHVAE(RHVAE):
                 z = self.leap_step_2(
                     recon_x, x, z, rho_, G, G_log_det
                 )
+
+                if self.metric == 'fisher':
+                    recon_x = self.decode(z)
+                    x = torch.distributions.Bernoulli(probs=recon_x).sample()
+                    G = self.fisher(recon_x, z, n_samples=100)
+                    G_log_det = torch.logdet(G)
+
+                if self.metric == 'jacobian':
+                    recon_x = self.decode(z)
+                    J_bis = self.jacobian(recon_x, z)
+                    G = torch.transpose(J_bis, 1, 2) @ J_bis
+                    G_log_det = torch.logdet(G)
+
+
                 rho__ = self.leap_step_3(
                     recon_x, x, z, rho_, G, G_log_det
                 )
@@ -822,7 +925,7 @@ class AdaRHVAE(RHVAE):
                 beta_sqrt = self._tempering(k)
                 rho = (beta_sqrt / beta_sqrt_old) * rho__
                 beta_sqrt_old = beta_sqrt
-
+                print(recon_x)
             recon_x = self.decode(z)
 
         return recon_x
