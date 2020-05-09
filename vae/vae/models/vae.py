@@ -813,7 +813,7 @@ class AdaRHVAE(RHVAE):
         # Compute expectation
         fisher = d_z_mat.mean(dim=1)
 
-        return fisher + 1e-6 * torch.eye(self.latent_dim)
+        return fisher + 1e-6 * torch.eye(self.latent_dim).to(self.device)
 
 
     def jacobian(self, recon_x, z, eps=0.00001):
