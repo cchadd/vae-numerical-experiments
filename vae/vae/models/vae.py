@@ -396,7 +396,7 @@ class HVAE(VAE):
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
 
-        # logpz0 = self.log_z(Z0).reshape(sample_size, -1) # log(p(z0))
+
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
 
         logrho0 = self.normal.log_prob(rho0).reshape(sample_size, -1) # log(p(rho0))
@@ -409,7 +409,7 @@ class HVAE(VAE):
             .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        # print(logpxz, logpz, logpz0, logqzx.shape, logrho.shape, logrho0.shape)
+
         logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
@@ -548,8 +548,7 @@ class RHVAE(HVAE):
 
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
-
-        logpz0 = self.log_z(Z0).reshape(sample_size, -1) # log(p(z0))
+       
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
 
         logrho0 = torch.distributions.MultivariateNormal(
@@ -568,7 +567,7 @@ class RHVAE(HVAE):
             .reshape(sample_size, -1)
         )  # log(q(z|x))
 
-        logpx = (logpxz + logpz + logrho - logpz0 - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
+        logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
 
@@ -782,7 +781,6 @@ class AdaRHVAE(RHVAE):
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
 
-        logpz0 = self.log_z(Z0).reshape(sample_size, -1) # log(p(z0))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
 
         logrho0 = torch.distributions.MultivariateNormal(
@@ -792,7 +790,6 @@ class AdaRHVAE(RHVAE):
         logrho = torch.distributions.MultivariateNormal(
             loc = torch.zeros_like(rho), covariance_matrix=G_rep
         ).log_prob(rho).reshape(sample_size, -1) # log(p(rho0))
-
         logqzx = (
             torch.distributions.MultivariateNormal(
                 loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
@@ -801,7 +798,7 @@ class AdaRHVAE(RHVAE):
             .reshape(sample_size, -1)
         )  # log(q(z|x))
 
-        logpx = (logpxz + logpz + logrho - logpz0 - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
+        logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
 
@@ -840,7 +837,7 @@ class AdaRHVAE(RHVAE):
         # Compute expectation
         fisher = d_z_mat.mean(dim=1)
 
-        return fisher + 1e-6 * torch.eye(self.latent_dim).to(self.device)
+        return fisher
 
 
     def jacobian(self, recon_x, z, eps=0.00001):
