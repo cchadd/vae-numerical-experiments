@@ -200,7 +200,7 @@ class VAE(BaseVAE, nn.Module):
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean() - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
@@ -321,7 +321,9 @@ class HVAE(VAE):
             rho_ = rho - (self.eps_lf / 2) * g
             z = z + self.eps_lf * rho_
 
-            # 2nd leapfrog ste
+            recon_x = self.decode(z)
+
+            # 2nd leapfrog step
             U = -self.log_p_xz(recon_x, x, z).sum()
             g = grad(U, z, create_graph=True)[0]
 
@@ -373,6 +375,8 @@ class HVAE(VAE):
 
             Z = Z + self.eps_lf * rho
 
+            recon_X = self.decode(Z)
+
             U = self.hamiltonian(recon_X, X_rep, Z, rho)
             g = grad(U, Z, create_graph=True)[0]
 
@@ -397,7 +401,7 @@ class HVAE(VAE):
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean() - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
@@ -454,8 +458,6 @@ class RHVAE(HVAE):
         recon_x = self.decode(z)
 
         # Define a metric G(x) = \Sigma^{-1}(x)
-        # G = self.fisher(recon_x, z, n_samples=100)
-        self.fisher(recon_x, z)
         self.G = torch.diag_embed((-log_var).exp())
         self.G_log_det = torch.logdet(self.G)
 
@@ -472,6 +474,9 @@ class RHVAE(HVAE):
             z = self.leap_step_2(
                 recon_x, x, z, rho_, G, G_log_det
             )
+
+            recon_x = self.decode(z)
+            
             rho__ = self.leap_step_3(
                 recon_x, x, z, rho_, G, G_log_det
             )
@@ -514,6 +519,9 @@ class RHVAE(HVAE):
             Z = self.leap_step_2(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
+
+            recon_X = self.decode(Z)
+
             rho__ = self.leap_step_3(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
@@ -532,49 +540,15 @@ class RHVAE(HVAE):
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
         logqzx = (
             torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=self.G
+                loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
             )
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean() - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
-
-    def fisher(self, recon_x, z, n_samples=1):
-        """
-        Compute estimate of the Fisher information matrix using MC
-        """
-        z_ = z.clone().detach()
-        noutputs = recon_x.shape[1]
-        z_ = z_.unsqueeze(1) # b, 1 ,in_dim
-        n = z_.size()[0]
-        z_ = z_.repeat(1, noutputs, 1) # b, out_dim, in_dim
-        z_.requires_grad_(True)
-        recon_x_ = self.decode(z_)
-
-        input_val = torch.eye(noutputs).reshape(1,noutputs, noutputs).repeat(n, 1, 1)
-        
-        jac = grad(recon_x_, z_, grad_outputs=input_val)[0]
-
-        # Estimate susing MC sampling
-        x_samples = torch.distributions.Bernoulli(probs=recon_x).sample(sample_shape=(n_samples,)).transpose(0, 1)
-
-        #print(x_samples.shape, jac.shape, recon_x.shape)
-
-        # Compute derivative of the log proba \partial log p(x|z) 
-        d_z = torch.transpose(jac, 1, 2) @ (- (1 - x_samples) / (1 - recon_x.unsqueeze(1)) + x_samples / recon_x.unsqueeze(1)).transpose(1, 2)
-        d_z = d_z.transpose(1, 2).unsqueeze(-1)
-
-        # Compute [\nabla \partial log p(x|x) \nabla \partial log p(x|z)^{\top}]
-        d_z_mat = d_z @ torch.transpose(d_z, 2, 3)
-        #print(d_z_mat.shape)
-
-        # Compute expectation
-        fisher = d_z_mat.mean(dim=1)
-
-        return fisher
 
     def leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
         """
@@ -686,16 +660,17 @@ class AdaRHVAE(RHVAE):
                 recon_x, x, z, rho_, G, G_log_det
             )
 
-            if self.metric == 'fisher':
-                recon_x = self.decode(z)
-                G = self.fisher(recon_x, z, n_samples=100)
-                G_log_det = torch.logdet(G)
+            recon_x = self.decode(z)
 
 
             if self.metric == 'jacobian':
-                recon_x = self.decode(z)
                 J_bis = self.jacobian_bis(recon_x, z)
                 G = torch.transpose(J_bis, 1, 2) @ J_bis
+                G_log_det = torch.logdet(G)
+
+            elif self.metric == 'fisher':
+
+                G = self.fisher(recon_x, z, n_samples=100)
                 G_log_det = torch.logdet(G)
 
 
@@ -752,6 +727,17 @@ class AdaRHVAE(RHVAE):
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
 
+            recon_X = self.decode(Z)
+
+            if self.metric == 'jacobian':
+                J_rep = self.jacobian_bis(recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim))
+                G_rep = torch.transpose(J_rep, 1, 2) @ J_rep
+                G_log_det_rep = torch.logdet(G_rep)
+
+            elif self.metric == 'fisher':
+                G_rep = self.fisher(recon_X, Z, n_samples=100)
+                G_log_det_rep = torch.logdet(G_rep)
+
             rho__ = self.leap_step_3(
                 recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep
             )
@@ -770,12 +756,12 @@ class AdaRHVAE(RHVAE):
 
         logqzx = (
             torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=G_rep.reshape(sample_size, -1, self.latent_dim, self.latent_dim)
+                loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
             )
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0) - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean() - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
@@ -793,7 +779,7 @@ class AdaRHVAE(RHVAE):
         z_.requires_grad_(True)
         recon_x_ = self.decode(z_)
 
-        input_val = torch.eye(noutputs).reshape(1,noutputs, noutputs).repeat(n, 1, 1)
+        input_val = torch.eye(noutputs).reshape(1,noutputs, noutputs).repeat(n, 1, 1).to(self.device)
         
         jac = grad(recon_x_, z_, grad_outputs=input_val)[0]
 
@@ -925,7 +911,7 @@ class AdaRHVAE(RHVAE):
                 beta_sqrt = self._tempering(k)
                 rho = (beta_sqrt / beta_sqrt_old) * rho__
                 beta_sqrt_old = beta_sqrt
-                print(recon_x)
+
             recon_x = self.decode(z)
 
         return recon_x

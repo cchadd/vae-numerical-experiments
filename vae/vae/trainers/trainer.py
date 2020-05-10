@@ -211,12 +211,12 @@ class ModelTrainer(BaseTrainer):
 
                 if mode == "train":
                     self.train_metrics[key][epoch] += (
-                        metrics[key].sum().item() / self.train_samples_size
+                        metrics[key].sum().item()
                     )
 
                 elif mode == "test":
                     self.test_metrics[key][epoch] += (
-                        metrics[key].sum().item() / self.test_samples_size
+                        metrics[key].sum().item()
                     )
 
             except KeyError:
