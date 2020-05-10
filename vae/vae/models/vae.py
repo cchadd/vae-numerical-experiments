@@ -200,7 +200,7 @@ class VAE(BaseVAE, nn.Module):
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).sum(dim=0) - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx

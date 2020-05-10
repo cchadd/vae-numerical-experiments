@@ -211,7 +211,7 @@ class ModelTrainer(BaseTrainer):
 
                 if mode == "train":
                     self.train_metrics[key][epoch] += (
-                        metrics[key].sum().item() / len(self.train_loader.dataset)
+                        metrics[key].sum().item() #/ len(self.train_loader.dataset)
                     )
 
                 elif mode == "test":
