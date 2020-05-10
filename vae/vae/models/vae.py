@@ -200,7 +200,7 @@ class VAE(BaseVAE, nn.Module):
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean() - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
@@ -401,7 +401,7 @@ class HVAE(VAE):
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean() - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
@@ -476,7 +476,7 @@ class RHVAE(HVAE):
             )
 
             recon_x = self.decode(z)
-            
+
             rho__ = self.leap_step_3(
                 recon_x, x, z, rho_, G, G_log_det
             )
@@ -545,7 +545,7 @@ class RHVAE(HVAE):
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean() - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
@@ -761,7 +761,7 @@ class AdaRHVAE(RHVAE):
             .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean() - torch.log(
+        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
