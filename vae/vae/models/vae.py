@@ -396,7 +396,7 @@ class HVAE(VAE):
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
 
-        logpz0 = self.log_z(Z0).reshape(sample_size, -1) # log(p(z0))
+        # logpz0 = self.log_z(Z0).reshape(sample_size, -1) # log(p(z0))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
 
         logrho0 = self.normal.log_prob(rho0).reshape(sample_size, -1) # log(p(rho0))
@@ -409,8 +409,8 @@ class HVAE(VAE):
             .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-
-        logpx = (logpxz + logpz + logrho - logpz0 - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
+        # print(logpxz, logpz, logpz0, logqzx.shape, logrho.shape, logrho0.shape)
+        logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
