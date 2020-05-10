@@ -584,6 +584,58 @@ class RHVAE(HVAE):
 
         return logpx
 
+    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
+        if z is None:
+            z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
+
+        else:
+            n_samples = z.shape[0]
+        
+        z.requires_grad_(True)
+        recon_x = self.decode(z)
+        x = torch.distributions.Bernoulli(probs=recon_x).sample()
+
+        _, log_var = self.encode(x)
+
+        # Define a metric G(x) = \Sigma^{-1}(x)
+        G = torch.diag_embed((-log_var).exp())
+        G_log_det = torch.logdet(G)
+
+
+        if leap_step:
+
+            gamma = torch.distributions.MultivariateNormal(
+                loc = torch.zeros_like(z), covariance_matrix=G
+            )
+
+            beta_sqrt_old = self.beta_zero_sqrt
+            rho = gamma / self.beta_zero_sqrt
+
+            for k in range(leap_nbr):
+
+                # Perform leapfrog steps
+                rho_ = self.leap_step_1(
+                    recon_x, x, z, rho, G, G_log_det
+                )
+                z = self.leap_step_2(
+                    recon_x, x, z, rho_, G, G_log_det
+                )
+
+                recon_x = self.decode(z)
+
+                rho__ = self.leap_step_3(
+                    recon_x, x, z, rho_, G, G_log_det
+                )
+
+                rho = rho__
+
+                # tempering steps
+                beta_sqrt = self._tempering(k)
+                rho = (beta_sqrt / beta_sqrt_old) * rho__
+                beta_sqrt_old = beta_sqrt
+
+        return recon_x
+
     def leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
         """
         Resolves eq.16 from Girolami using fixed point iterations
@@ -933,9 +985,17 @@ class AdaRHVAE(RHVAE):
             G = self.fisher(recon_x, z, n_samples=100)
             G_log_det = torch.logdet(G)
 
+        elif self.metric == 'sigma':
+            _, log_var = self.encode(x)
+            # Define a metric G(x) = \Sigma^{-1}(x)
+            G = torch.diag_embed((-log_var).exp())
+            G_log_det = torch.logdet(G)
+
         if leap_step:
 
-            gamma = torch.randn_like(z, device=self.device)
+            gamma = torch.distributions.MultivariateNormal(
+                loc = torch.zeros_like(z), covariance_matrix=G
+            ).sample()
             beta_sqrt_old = self.beta_zero_sqrt
             rho = gamma / self.beta_zero_sqrt
 
@@ -949,11 +1009,7 @@ class AdaRHVAE(RHVAE):
                     recon_x, x, z, rho_, G, G_log_det
                 )
 
-                if self.metric == 'fisher':
-                    recon_x = self.decode(z)
-                    x = torch.distributions.Bernoulli(probs=recon_x).sample()
-                    G = self.fisher(recon_x, z, n_samples=100)
-                    G_log_det = torch.logdet(G)
+                recon_x = self.decode(z)
 
                 if self.metric == 'jacobian':
                     recon_x = self.decode(z)
@@ -961,6 +1017,11 @@ class AdaRHVAE(RHVAE):
                     G = torch.transpose(J_bis, 1, 2) @ J_bis
                     G_log_det = torch.logdet(G)
 
+                elif self.metric == 'fisher':
+                    recon_x = self.decode(z)
+                    x = torch.distributions.Bernoulli(probs=recon_x).sample()
+                    G = self.fisher(recon_x, z, n_samples=100)
+                    G_log_det = torch.logdet(G)
 
                 rho__ = self.leap_step_3(
                     recon_x, x, z, rho_, G, G_log_det
@@ -972,7 +1033,5 @@ class AdaRHVAE(RHVAE):
                 beta_sqrt = self._tempering(k)
                 rho = (beta_sqrt / beta_sqrt_old) * rho__
                 beta_sqrt_old = beta_sqrt
-
-            recon_x = self.decode(z)
 
         return recon_x
