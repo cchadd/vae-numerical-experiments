@@ -359,10 +359,12 @@ class HVAE(VAE):
         mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
+        Z0 = Z
         recon_X = self.decode(Z)
 
         gamma = torch.randn_like(Z, device=self.device)
         rho = gamma / self.beta_zero_sqrt
+        rho0 = rho
         beta_sqrt_old = self.beta_zero_sqrt
         X_rep = x.repeat(sample_size, 1, 1, 1)
 
@@ -393,15 +395,22 @@ class HVAE(VAE):
 
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
+
+        logpz0 = self.log_z(Z0).reshape(sample_size, -1) # log(p(z0))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
+
+        logrho0 = self.normal.log_prob(rho0).reshape(sample_size, -1) # log(p(rho0))
+        logrho = self.normal.log_prob(rho).reshape(sample_size, -1) # log(p(rho))
+
         logqzx = (
             torch.distributions.MultivariateNormal(
                 loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
             )
-            .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
+            .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
+
+        logpx = (logpxz + logpz + logrho - logpz0 - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
         return logpx
@@ -500,10 +509,12 @@ class RHVAE(HVAE):
         mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
+        Z0 = Z
         recon_X = self.decode(Z)
 
         gamma = torch.randn_like(Z, device=self.device)
         rho = gamma / self.beta_zero_sqrt
+        rho0 = rho
         beta_sqrt_old = self.beta_zero_sqrt
         X_rep = x.repeat(sample_size, 1, 1, 1)
 
@@ -537,17 +548,30 @@ class RHVAE(HVAE):
 
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
+
+        logpz0 = self.log_z(Z0).reshape(sample_size, -1) # log(p(z0))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
+
+        logrho0 = torch.distributions.MultivariateNormal(
+            loc = torch.zeros_like(rho0), covariance_matrix=G_rep
+        ).log_prob(rho0).reshape(sample_size, -1) 
+        # log(p(rho0))
+        logrho = torch.distributions.MultivariateNormal(
+            loc = torch.zeros_like(rho), covariance_matrix=G_rep
+        ).log_prob(rho).reshape(sample_size, -1) # log(p(rho0))
+
         logqzx = (
             torch.distributions.MultivariateNormal(
                 loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
             )
-            .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
+            .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
+
+        logpx = (logpxz + logpz + logrho - logpz0 - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
+
         return logpx
 
     def leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
@@ -696,11 +720,12 @@ class AdaRHVAE(RHVAE):
         mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
-        Z.requires_grad_(True)
+        Z0 = Z
         recon_X = self.decode(Z)
 
         gamma = torch.randn_like(Z, device=self.device)
         rho = gamma / self.beta_zero_sqrt
+        rho0 = rho
         beta_sqrt_old = self.beta_zero_sqrt
         X_rep = x.repeat(sample_size, 1, 1, 1)
 
@@ -708,14 +733,17 @@ class AdaRHVAE(RHVAE):
             J_rep = self.jacobian_bis(recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim))
             G_rep = torch.transpose(J_rep, 1, 2) @ J_rep
             G_log_det_rep = torch.logdet(G_rep)
+            G_rep0 = G_rep
 
         elif self.metric == 'sigma':
-            G = torch.diag_embed((-log_var).exp())
+            G_rep = torch.diag_embed((-log_var).exp())
             G_log_det_rep = torch.logdet(G)
+            G_rep0 = G_rep
 
         elif self.metric == 'fisher':
             G_rep = self.fisher(recon_X, Z, n_samples=100)
             G_log_det_rep = torch.logdet(G_rep)
+            G_rep0 = G_rep
 
 
         for k in range(self.n_lf):
@@ -750,20 +778,33 @@ class AdaRHVAE(RHVAE):
         bce = F.binary_cross_entropy(
             recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1), reduction="none"
         )
+
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
+
+        logpz0 = self.log_z(Z0).reshape(sample_size, -1) # log(p(z0))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
+
+        logrho0 = torch.distributions.MultivariateNormal(
+            loc = torch.zeros_like(rho0), covariance_matrix=G_rep0
+        ).log_prob(rho0).reshape(sample_size, -1) 
+        # log(p(rho0))
+        logrho = torch.distributions.MultivariateNormal(
+            loc = torch.zeros_like(rho), covariance_matrix=G_rep
+        ).log_prob(rho).reshape(sample_size, -1) # log(p(rho0))
 
         logqzx = (
             torch.distributions.MultivariateNormal(
                 loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
             )
-            .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
+            .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
             .reshape(sample_size, -1)
         )  # log(q(z|x))
-        logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
+
+        logpx = (logpxz + logpz + logrho - logpz0 - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
+
         return logpx
 
 
