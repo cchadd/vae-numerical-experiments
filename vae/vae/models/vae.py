@@ -596,7 +596,7 @@ class RHVAE(HVAE):
 
             gamma = torch.distributions.MultivariateNormal(
                 loc=torch.zeros_like(z), covariance_matrix=G
-            )
+            ).sample()
 
             beta_sqrt_old = self.beta_zero_sqrt
             rho = gamma / self.beta_zero_sqrt
