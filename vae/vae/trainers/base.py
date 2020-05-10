@@ -26,13 +26,10 @@ class BaseTrainer(ABC):
                 "log_p_z",
                 "lop_p_xz",
                 "kl_prior",
-                "kl_cond"
+                "kl_cond",
             ]
 
-            self.losses = {
-                "train_loss": [0] * n_epochs,
-                "test_loss": [0] * n_epochs
-            }
+            self.losses = {"train_loss": [0] * n_epochs, "test_loss": [0] * n_epochs}
 
             self.train_metrics = {key: [0] * n_epochs for key in self.metrics}
             self.test_metrics = {key: [0] * n_epochs for key in self.metrics}

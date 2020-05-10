@@ -8,16 +8,15 @@ from torchvision.utils import save_image
 from .base import BaseVAE
 
 
-# TO BE cleaned 
+# TO BE cleaned
 class VAE(BaseVAE, nn.Module):
-
-    def __init__(self, model_type='mlp', input_dim=2, latent_dim=2):
+    def __init__(self, model_type="mlp", input_dim=2, latent_dim=2):
 
         BaseVAE.__init__(self)
         nn.Module.__init__(self)
 
         self.name = "VAE"
-        self.archi = "Gauss" 
+        self.archi = "Gauss"
 
         if model_type == "mlp":
 
@@ -41,10 +40,9 @@ class VAE(BaseVAE, nn.Module):
             # self.fc42 = nn.Linear(latent_dim, 32)
             # self.fc52 = nn.Linear(32, 64)
             self.fc62 = nn.Linear(2, input_dim)
- 
+
             self.__encoder = self.__encode_mlp
             self.__decoder = self.__decode_mlp
-
 
         else:
             raise Exception(f"Architecture {model_type} is not defined")
@@ -55,8 +53,7 @@ class VAE(BaseVAE, nn.Module):
         self.normal = torch.distributions.MultivariateNormal(
             loc=torch.zeros(latent_dim).to(self.device),
             covariance_matrix=torch.eye(latent_dim).to(self.device),
-        ) 
-
+        )
 
     def forward(self, x, ensure_geo=False):
         """
@@ -69,20 +66,19 @@ class VAE(BaseVAE, nn.Module):
         z, eps = self._sample_gauss(mu, std)
         recon_x = self.decode(z)
 
-        #if ensure_geo:
+        # if ensure_geo:
         #    recon_log_var = recon_log_var.detach()
 
-        #else:
+        # else:
         #    mu = mu.detach()
         #    log_var = log_var.detach()
         #    recon_mu = recon_mu.detach()
 
         return recon_x, z, eps, mu, log_var
 
-
     def loss_function(self, recon_x, x, mu, log_var):
-        #BCE = F.binary_cross_entropy(recon_x, x.view(-1, self.input_dim), reduction="sum")
-        
+        # BCE = F.binary_cross_entropy(recon_x, x.view(-1, self.input_dim), reduction="sum")
+
         # x = x.view(-1, self.input_dim)
 
         recon_mu, recon_log_var = recon_x
@@ -94,7 +90,7 @@ class VAE(BaseVAE, nn.Module):
 
         KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
 
-        return LIK + KLD 
+        return LIK + KLD
 
     def encode(self, x):
         return self.__encoder(x)
@@ -107,10 +103,12 @@ class VAE(BaseVAE, nn.Module):
         Simulate p(x|z) to generate an image
         """
         recon_mu, recon_log_var = self.decode(z)
-        return torch.distributions.MultivariateNormal(loc=recon_mu, covariance_matrix=torch.diag_embed(recon_log_var.exp())).sample()
+        return torch.distributions.MultivariateNormal(
+            loc=recon_mu, covariance_matrix=torch.diag_embed(recon_log_var.exp())
+        ).sample()
 
     def __encode_mlp(self, x):
-        h1  = F.relu(self.fc1(x))
+        h1 = F.relu(self.fc1(x))
         # h21 = torch.relu(self.fc21(h1))
         # h22 = torch.relu(self.fc22(h1))
         h31 = self.fc31(h1)
@@ -125,9 +123,8 @@ class VAE(BaseVAE, nn.Module):
         # h52 = torch.relu(self.fc52(h42))
         h61 = self.fc61(h4)
         h62 = self.fc62(h4)
-        
-        return h61, h62
 
+        return h61, h62
 
     def _sample_gauss(self, mu, std):
         # Reparametrization trick
@@ -182,7 +179,6 @@ class VAE(BaseVAE, nn.Module):
 
         return -LIK
 
-
     def log_z(self, z):
         """
         Return Normal density function as prior on z
@@ -197,11 +193,12 @@ class VAE(BaseVAE, nn.Module):
         mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
-        
+
         recon_X = self.decode(Z)
 
-        lik = self.log_p_x_given_z(recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1))
-
+        lik = self.log_p_x_given_z(
+            recon_X, x.view(-1, self.input_dim).repeat(sample_size, 1)
+        )
 
         # compute densities to recover p(x)
         logpxz = lik.reshape(sample_size, -1)  # log(p(x|z))
