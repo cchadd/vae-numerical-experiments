@@ -459,19 +459,24 @@ class RHVAE(HVAE):
         """
 
         recon_x, z0, _, mu, log_var = self.vae_forward(x)
-        gamma = torch.randn_like(z0, device=self.device)
-        rho = gamma / self.beta_zero_sqrt
+    
         z = z0
-        beta_sqrt_old = self.beta_zero_sqrt
-
-        recon_x = self.decode(z)
 
         # Define a metric G(x) = \Sigma^{-1}(x)
-        self.G = torch.diag_embed((-log_var).exp())
-        self.G_log_det = torch.logdet(self.G)
+        G = torch.diag_embed((-log_var).exp())
+        G_log_det = torch.logdet(G)
 
-        G = self.G
-        G_log_det = self.G_log_det
+        # gamma = torch.randn_like(z0, device=self.device)
+        # rho = gamma / self.beta_zero_sqrt
+        
+        # Sample gamma
+        gamma = torch.distributions.MultivariateNormal(
+            loc = torch.zeros_like(z), covariance_matrix=G
+        ).sample()
+
+        rho = gamma / self.beta_zero_sqrt
+
+        beta_sqrt_old = self.beta_zero_sqrt
 
 
         for k in range(self.n_lf):
@@ -510,17 +515,23 @@ class RHVAE(HVAE):
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
         Z0 = Z
+
+        G = torch.diag_embed((-log_var).exp())
+        G_rep = G.repeat(sample_size, 1, 1)
+        G_log_det = G.logdet()
+        G_log_det_rep = G_log_det.repeat(sample_size, 1, 1)
+
         recon_X = self.decode(Z)
 
-        gamma = torch.randn_like(Z, device=self.device)
+        gamma = torch.distributions.MultivariateNormal(
+            loc = torch.zeros_like(Z), covariance_matrix=G_rep
+        ).sample()
+
         rho = gamma / self.beta_zero_sqrt
         rho0 = rho
+
         beta_sqrt_old = self.beta_zero_sqrt
         X_rep = x.repeat(sample_size, 1, 1, 1)
-
-        #G = torch.diag_embed((-log_var).exp())
-        G_rep = self.G.repeat(sample_size, 1, 1)
-        G_log_det_rep = self.G_log_det.repeat(sample_size, 1, 1)
 
         for k in range(self.n_lf):
 
@@ -644,34 +655,36 @@ class AdaRHVAE(RHVAE):
         """
 
         recon_x, z0, _, mu, log_var = self.vae_forward(x)
-        gamma = torch.randn_like(z0, device=self.device)
-        rho = gamma / self.beta_zero_sqrt
-        z = z0
-        beta_sqrt_old = self.beta_zero_sqrt
 
-        recon_x = self.decode(z)
+        z = z0
 
         if self.metric == "jacobian":
             # Define metric G(z) = Jac(g(z))
             J_bis = self.jacobian_bis(recon_x, z)
- 
-            self.G = torch.transpose(J_bis, 1, 2) @ J_bis
-            self.G_log_det = torch.logdet(self.G)
+            G = torch.transpose(J_bis, 1, 2) @ J_bis
+            G_log_det = torch.logdet(G)
 
 
         elif self.metric == "fisher":
-            self.G = self.fisher(recon_x, z, n_samples=100)
-            self.G_log_det = torch.logdet(self.G)
+            G = self.fisher(recon_x, z, n_samples=100)
+            G_log_det = torch.logdet(G)
 
 
         elif self.metric == "sigma":
             # Define a metric G(x) = \Sigma^{-1}(x)
-            self.G = torch.diag_embed((-log_var).exp())
-            self.G_log_det = torch.logdet(self.G)
+            G = torch.diag_embed((-log_var).exp())
+            G_log_det = torch.logdet(G)
 
+        gamma = torch.distributions.MultivariateNormal(
+            loc = torch.zeros_like(z), covariance_matrix=G
+        ).sample()
 
-        G = self.G
-        G_log_det = self.G_log_det
+        rho = gamma / self.beta_zero_sqrt
+
+        beta_sqrt_old = self.beta_zero_sqrt
+
+        recon_x = self.decode(z)
+
 
         for k in range(self.n_lf):
 
@@ -720,13 +733,6 @@ class AdaRHVAE(RHVAE):
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
         Z0 = Z
-        recon_X = self.decode(Z)
-
-        gamma = torch.randn_like(Z, device=self.device)
-        rho = gamma / self.beta_zero_sqrt
-        rho0 = rho
-        beta_sqrt_old = self.beta_zero_sqrt
-        X_rep = x.repeat(sample_size, 1, 1, 1)
 
         if self.metric == 'jacobian':
             J_rep = self.jacobian_bis(recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim))
@@ -743,6 +749,23 @@ class AdaRHVAE(RHVAE):
             G_rep = self.fisher(recon_X, Z, n_samples=100)
             G_log_det_rep = torch.logdet(G_rep)
             G_rep0 = G_rep
+
+
+
+
+        recon_X = self.decode(Z)
+
+        gamma = torch.distributions.MultivariateNormal(
+            loc = torch.zeros_like(Z), covariance_matrix=G_rep
+        )
+
+        rho = gamma / self.beta_zero_sqrt
+
+        rho0 = rho
+
+        beta_sqrt_old = self.beta_zero_sqrt
+
+        X_rep = x.repeat(sample_size, 1, 1, 1)
 
 
         for k in range(self.n_lf):
