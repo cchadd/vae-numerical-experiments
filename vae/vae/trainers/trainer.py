@@ -196,7 +196,7 @@ class ModelTrainer(BaseTrainer):
         self.losses["test_loss"][epoch] += test_loss
 
         if self.verbose:
-            print("====> Test set loss: {:.4f} \Likelihood: {:.4f}".format(test_loss, self.test_metrics["log_p_x"][epoch]))
+            print("====> Test set loss: {:.4f} \tLikelihood: {:.4f}".format(test_loss, self.test_metrics["log_p_x"][epoch]))
 
     def __get_model_metrics(
         self, epoch, recon_data, data, z, mu, log_var, sample_size=16, mode="train"
