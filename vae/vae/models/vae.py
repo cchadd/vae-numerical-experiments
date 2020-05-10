@@ -698,14 +698,16 @@ class AdaRHVAE(RHVAE):
 
             recon_x = self.decode(z)
 
-
             if self.metric == 'jacobian':
                 J_bis = self.jacobian_bis(recon_x, z)
                 G = torch.transpose(J_bis, 1, 2) @ J_bis
                 G_log_det = torch.logdet(G)
 
-            elif self.metric == 'fisher':
+            elif self.metric == 'sigma':
+                G = torch.diag_embed((-log_var).exp())
+                G_log_det = torch.logdet(G)
 
+            elif self.metric == 'fisher':
                 G = self.fisher(recon_x, z, n_samples=100)
                 G_log_det = torch.logdet(G)
 
@@ -734,6 +736,8 @@ class AdaRHVAE(RHVAE):
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
         Z0 = Z
 
+        recon_X = self.decode(Z)
+
         if self.metric == 'jacobian':
             J_rep = self.jacobian_bis(recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim))
             G_rep = torch.transpose(J_rep, 1, 2) @ J_rep
@@ -750,10 +754,6 @@ class AdaRHVAE(RHVAE):
             G_log_det_rep = torch.logdet(G_rep)
             G_rep0 = G_rep
 
-
-
-
-        recon_X = self.decode(Z)
 
         gamma = torch.distributions.MultivariateNormal(
             loc = torch.zeros_like(Z), covariance_matrix=G_rep
