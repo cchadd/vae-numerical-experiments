@@ -757,7 +757,7 @@ class AdaRHVAE(RHVAE):
 
         gamma = torch.distributions.MultivariateNormal(
             loc = torch.zeros_like(Z), covariance_matrix=G_rep
-        )
+        ).sample()
 
         rho = gamma / self.beta_zero_sqrt
 
