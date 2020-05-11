@@ -61,6 +61,7 @@ class ModelTrainer(BaseTrainer):
             "HVAE",
             "RHVAE",
             "GEO_VAE",
+            "Two times"
         ], f"{model.name} is not handled by the trainer"
 
         assert model.archi in [
@@ -108,6 +109,20 @@ class ModelTrainer(BaseTrainer):
                         recon_batch, data, z0, z, rho, gamma, mu, log_var
                     )
                     # print(loss)
+
+                elif self.model.name == 'Two times':
+                    if epoch < int(self.n_epochs / 2):
+                        recon_batch, z, z0, rho, gamma, mu, log_var = self.model(data, encoder_only=True)
+                        loss = self.model.loss_function(
+                            recon_batch, data, z0, z, rho, gamma, mu, log_var
+                        )
+                    else:
+                        recon_batch, z, z0, rho, gamma, mu, log_var = self.model(data, decoder_only=True)
+                        loss = self.model.loss_function(
+                            recon_batch, data, z0, z, rho, gamma, mu, log_var
+                        )
+
+
 
             elif self.model.archi == "Gauss":
 
