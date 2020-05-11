@@ -18,6 +18,8 @@ class BaseTrainer(ABC):
         self.record_metrics = record_metrics
         self.verbose = verbose
 
+        self.losses = {"train_loss": [0] * n_epochs, "test_loss": [0] * n_epochs}
+
         if record_metrics:
             self.metrics = [
                 "log_p_x_given_z",
@@ -28,8 +30,6 @@ class BaseTrainer(ABC):
                 "kl_prior",
                 "kl_cond",
             ]
-
-            self.losses = {"train_loss": [0] * n_epochs, "test_loss": [0] * n_epochs}
 
             self.train_metrics = {key: [0] * n_epochs for key in self.metrics}
             self.test_metrics = {key: [0] * n_epochs for key in self.metrics}

@@ -697,7 +697,7 @@ class AdaRHVAE(RHVAE):
         if self.metric == "jacobian":
             # Define metric G(z) = Jac(g(z))
             J_bis = self.jacobian_bis(recon_x, z)
-            G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim).to(self.device)
+            G = torch.transpose(J_bis, 1, 2) @ J_bis #+ 1e-7 * torch.eye(self.latent_dim).to(self.device)
             G_log_det = torch.logdet(G)
 
         elif self.metric == "fisher":
@@ -727,18 +727,18 @@ class AdaRHVAE(RHVAE):
 
             recon_x = self.decode(z)
 
-            if self.metric == "jacobian":
-                J_bis = self.jacobian_bis(recon_x, z)
-                G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim).to(self.device)
-                G_log_det = torch.logdet(G)
-
-            elif self.metric == "sigma":
-                G = torch.diag_embed((-log_var).exp())
-                G_log_det = torch.logdet(G)
-
-            elif self.metric == "fisher":
-                G = self.fisher(recon_x, z, n_samples=100)
-                G_log_det = torch.logdet(G)
+            #if self.metric == "jacobian":
+            #    J_bis = self.jacobian_bis(recon_x, z)
+            #    G = torch.transpose(J_bis, 1, 2) @ J_bis #+ 1e-7 * torch.eye(self.latent_dim).to(self.device)
+            #    G_log_det = torch.logdet(G)
+#
+            #elif self.metric == "sigma":
+            #    G = torch.diag_embed((-log_var).exp())
+            #    G_log_det = torch.logdet(G)
+#
+            #elif self.metric == "fisher":
+            #    G = self.fisher(recon_x, z, n_samples=100)
+            #    G_log_det = torch.logdet(G)
 
             rho__ = self.leap_step_3(recon_x, x, z, rho_, G, G_log_det)
 
@@ -766,7 +766,7 @@ class AdaRHVAE(RHVAE):
             J_rep = self.jacobian_bis(
                 recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim)
             )
-            G_rep = torch.transpose(J_rep, 1, 2) @ J_rep + 1e-7 * torch.eye(self.latent_dim).to(self.device)
+            G_rep = torch.transpose(J_rep, 1, 2) @ J_rep #+ 1e-7 * torch.eye(self.latent_dim).to(self.device)
             G_log_det_rep = torch.logdet(G_rep)
             G_rep0 = G_rep
 
@@ -799,16 +799,16 @@ class AdaRHVAE(RHVAE):
 
             recon_X = self.decode(Z)
 
-            if self.metric == "jacobian":
-                J_rep = self.jacobian_bis(
-                    recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim)
-                )
-                G_rep = torch.transpose(J_rep, 1, 2) @ J_rep + 1e-7 * torch.eye(self.latent_dim).to(self.device)
-                G_log_det_rep = torch.logdet(G_rep)
-
-            elif self.metric == "fisher":
-                G_rep = self.fisher(recon_X, Z, n_samples=100)
-                G_log_det_rep = torch.logdet(G_rep)
+            # if self.metric == "jacobian":
+            #     J_rep = self.jacobian_bis(
+            #         recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim)
+            #     )
+            #     G_rep = torch.transpose(J_rep, 1, 2) @ J_rep #+ 1e-7 * torch.eye(self.latent_dim).to(self.device)
+            #     G_log_det_rep = torch.logdet(G_rep)
+# 
+            # elif self.metric == "fisher":
+            #     G_rep = self.fisher(recon_X, Z, n_samples=100)
+            #     G_log_det_rep = torch.logdet(G_rep)
 
             rho__ = self.leap_step_3(recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep)
 
@@ -899,7 +899,7 @@ class AdaRHVAE(RHVAE):
         # Compute expectation
         fisher = d_z_mat.mean(dim=1)
 
-        return fisher + 1e-7 * torch.eye(self.latent_dim).to(self.device)
+        return fisher #+ 1e-7 * torch.eye(self.latent_dim).to(self.device)
 
     def jacobian(self, recon_x, z, eps=0.00001):
         """
@@ -996,17 +996,17 @@ class AdaRHVAE(RHVAE):
 
                 recon_x = self.decode(z)
 
-                if self.metric == "jacobian":
-                    recon_x = self.decode(z)
-                    J_bis = self.jacobian(recon_x, z)
-                    G = torch.transpose(J_bis, 1, 2) @ J_bis
-                    G_log_det = torch.logdet(G)
-
-                elif self.metric == "fisher":
-                    recon_x = self.decode(z)
-                    x = torch.distributions.Bernoulli(probs=recon_x).sample()
-                    G = self.fisher(recon_x, z, n_samples=100)
-                    G_log_det = torch.logdet(G)
+                # if self.metric == "jacobian":
+                #     recon_x = self.decode(z)
+                #     J_bis = self.jacobian(recon_x, z)
+                #     G = torch.transpose(J_bis, 1, 2) @ J_bis
+                #     G_log_det = torch.logdet(G)
+# 
+                # elif self.metric == "fisher":
+                #     recon_x = self.decode(z)
+                #     x = torch.distributions.Bernoulli(probs=recon_x).sample()
+                #     G = self.fisher(recon_x, z, n_samples=100)
+                #     G_log_det = torch.logdet(G)
 
                 rho__ = self.leap_step_3(recon_x, x, z, rho_, G, G_log_det)
 
