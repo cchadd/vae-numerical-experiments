@@ -191,9 +191,10 @@ class ModelTrainer(BaseTrainer):
                         recon, data, mu, log_var
                     ).item()
 
-            self.__get_model_metrics(
-                epoch, recon, data, z, mu, log_var, sample_size=16, mode="test"
-            )
+            if self.record_metrics:
+                self.__get_model_metrics(
+                    epoch, recon, data, z, mu, log_var, sample_size=16, mode="test"
+                )
 
         test_loss /= len(self.test_loader.dataset)
 
