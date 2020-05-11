@@ -697,7 +697,7 @@ class AdaRHVAE(RHVAE):
         if self.metric == "jacobian":
             # Define metric G(z) = Jac(g(z))
             J_bis = self.jacobian_bis(recon_x, z)
-            G = torch.transpose(J_bis, 1, 2) @ J_bis
+            G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim).to(self.device)
             G_log_det = torch.logdet(G)
 
         elif self.metric == "fisher":
@@ -729,7 +729,7 @@ class AdaRHVAE(RHVAE):
 
             if self.metric == "jacobian":
                 J_bis = self.jacobian_bis(recon_x, z)
-                G = torch.transpose(J_bis, 1, 2) @ J_bis
+                G = torch.transpose(J_bis, 1, 2) @ J_bis + 1e-7 * torch.eye(self.latent_dim).to(self.device)
                 G_log_det = torch.logdet(G)
 
             elif self.metric == "sigma":
@@ -766,7 +766,7 @@ class AdaRHVAE(RHVAE):
             J_rep = self.jacobian_bis(
                 recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim)
             )
-            G_rep = torch.transpose(J_rep, 1, 2) @ J_rep
+            G_rep = torch.transpose(J_rep, 1, 2) @ J_rep + 1e-7 * torch.eye(self.latent_dim).to(self.device)
             G_log_det_rep = torch.logdet(G_rep)
             G_rep0 = G_rep
 
@@ -803,7 +803,7 @@ class AdaRHVAE(RHVAE):
                 J_rep = self.jacobian_bis(
                     recon_X.reshape(-1, self.input_dim), Z.reshape(-1, self.latent_dim)
                 )
-                G_rep = torch.transpose(J_rep, 1, 2) @ J_rep
+                G_rep = torch.transpose(J_rep, 1, 2) @ J_rep + 1e-7 * torch.eye(self.latent_dim).to(self.device)
                 G_log_det_rep = torch.logdet(G_rep)
 
             elif self.metric == "fisher":
@@ -899,7 +899,7 @@ class AdaRHVAE(RHVAE):
         # Compute expectation
         fisher = d_z_mat.mean(dim=1)
 
-        return fisher
+        return fisher + 1e-7 * torch.eye(self.latent_dim).to(self.device)
 
     def jacobian(self, recon_x, z, eps=0.00001):
         """
@@ -952,7 +952,7 @@ class AdaRHVAE(RHVAE):
 
         jac = grad(recon_x_, z_, grad_outputs=input_val)[0]
 
-        return jac
+        return jac 
 
     def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
         if z is None:
