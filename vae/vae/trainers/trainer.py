@@ -136,17 +136,19 @@ class ModelTrainer(BaseTrainer):
                     mode="train",
                 )
 
-        self.losses["train_loss"][epoch] += train_loss / len(self.train_loader.dataset)
 
-        if self.verbose:
-            print(
-                "====> Epoch: {} Average loss: {:.4f} \tLikelihood: {:.6f} \t KL prior: {:.4f}".format(
-                    epoch,
-                    train_loss / len(self.train_loader.dataset),
-                    self.train_metrics["log_p_x"][epoch],
-                    self.train_metrics["kl_prior"][epoch],
+        if self.record_metrics:
+            self.losses["train_loss"][epoch] += train_loss / len(self.train_loader.dataset)
+
+            if self.verbose:
+                print(
+                    "====> Epoch: {} Average loss: {:.4f} \tLikelihood: {:.6f} \t KL prior: {:.4f}".format(
+                        epoch,
+                        train_loss / len(self.train_loader.dataset),
+                        self.train_metrics["log_p_x"][epoch],
+                        self.train_metrics["kl_prior"][epoch],
+                    )
                 )
-            )
 
     def __test_epoch(self, epoch):
         self.model.eval()
@@ -195,14 +197,15 @@ class ModelTrainer(BaseTrainer):
 
         test_loss /= len(self.test_loader.dataset)
 
-        self.losses["test_loss"][epoch] += test_loss
+        if self.record_metrics:
+            self.losses["test_loss"][epoch] += test_loss
 
-        if self.verbose:
-            print(
-                "====> Test set loss: {:.4f} \tLikelihood: {:.4f}".format(
-                    test_loss, self.test_metrics["log_p_x"][epoch]
+            if self.verbose:
+                print(
+                    "====> Test set loss: {:.4f} \tLikelihood: {:.4f}".format(
+                        test_loss, self.test_metrics["log_p_x"][epoch]
+                    )
                 )
-            )
 
     def __get_model_metrics(
         self, epoch, recon_data, data, z, mu, log_var, sample_size=16, mode="train"
