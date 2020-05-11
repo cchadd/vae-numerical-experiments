@@ -399,7 +399,7 @@ class HVAE(VAE):
 
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
 
-        logrho0 = self.normal.log_prob(rho0).reshape(sample_size, -1)  # log(p(rho0))
+        logrho0 = self.beta_zero_sqrt * self.normal.log_prob(rho0).reshape(sample_size, -1)  # log(p(rho0))
         logrho = self.normal.log_prob(rho).reshape(sample_size, -1)  # log(p(rho))
 
         logqzx = (
@@ -545,7 +545,7 @@ class RHVAE(HVAE):
 
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
 
-        logrho0 = (
+        logrho0 = self.beta_zero_sqrt * (
             torch.distributions.MultivariateNormal(
                 loc=torch.zeros_like(rho0), covariance_matrix=G_rep
             )
@@ -826,7 +826,7 @@ class AdaRHVAE(RHVAE):
 
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
 
-        logrho0 = (
+        logrho0 = self.beta_zero_sqrt * (
             torch.distributions.MultivariateNormal(
                 loc=torch.zeros_like(rho0), covariance_matrix=G_rep0
             )
