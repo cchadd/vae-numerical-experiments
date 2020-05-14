@@ -398,6 +398,52 @@ class HVAE(VAE):
         logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(torch.Tensor([sample_size]).to(self.device))
         return logpx
 
+    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
+        if z is None:
+            z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
+
+        else:
+            n_samples = z.shape[0]
+
+        z.requires_grad_(True)
+        recon_x = self.decode(z)
+        x = torch.distributions.Bernoulli(probs=recon_x).sample()
+
+        if leap_step:
+
+            gamma = torch.randn_like(z, device=self.device)
+
+            beta_sqrt_old = self.beta_zero_sqrt
+            rho = gamma / self.beta_zero_sqrt
+
+            for k in range(leap_nbr):
+
+                # Computes potential energy
+                U = -self.log_p_xz(recon_x, x, z).sum()
+
+                # Compute its gradient
+                g = grad(U, z, create_graph=True)[0]
+
+                # 1st leapfrog step
+                rho_ = rho - (self.eps_lf / 2) * g
+                z = z + self.eps_lf * rho_
+
+                recon_x = self.decode(z)
+
+                # 2nd leapfrog step
+                U = -self.log_p_xz(recon_x, x, z).sum()
+                g = grad(U, z, create_graph=True)[0]
+
+                rho__ = rho_ - (self.eps_lf / 2) * g
+
+                # tempering steps
+                beta_sqrt = self._tempering(k)
+                rho = (beta_sqrt_old / beta_sqrt) * rho__
+                beta_sqrt_old = beta_sqrt
+
+        return recon_x
+
+
     def hamiltonian(self, recon_x, x, z, rho, G=None, G_log_det=None):
 
         if self.name == "HVAE":
@@ -615,14 +661,14 @@ class RHVAE(HVAE):
         G = torch.diag_embed((-log_var).exp())
         G_log_det = torch.logdet(G)
 
+        beta_sqrt_old = self.beta_zero_sqrt
+
         if leap_step:
 
-            gamma = torch.distributions.MultivariateNormal(
-                loc=torch.zeros_like(z), covariance_matrix=G
-            ).sample()
-
-            beta_sqrt_old = self.beta_zero_sqrt
+            gamma = torch.randn_like(z, device=self.device)
             rho = gamma / self.beta_zero_sqrt
+
+            rho = (G ** 0.5 @ rho.unsqueeze(-1)).squeeze(-1) # sample from the multivariate N(0, G)
 
             for k in range(leap_nbr):
 
@@ -1140,28 +1186,33 @@ class AdaRHVAE(RHVAE):
             J = self.jacobian_bis(recon_x, z)
             G = torch.transpose(J, 1, 2) @ J
             G_log_det = torch.logdet(G)
+            L = torch.cholesky(G)
 
         elif self.metric == "fisher":
             G = self.fisher(recon_x, z, n_samples=100)
             G_log_det = torch.logdet(G)
+            L = torch.cholesky(G)
 
         elif self.metric == "sigma":
             _, log_var = self.encode(x)
             # Define a metric G(x) = \Sigma^{-1}(x)
             G = torch.diag_embed((-log_var).exp())
             G_log_det = torch.logdet(G)
+            L = torch.cholesky(G)
 
         elif self.metric == 'TBL':
             G = self.G(z)
             G_log_det = torch.logdet(G)
+            L = torch.cholesky(G)
 
         if leap_step:
 
-            gamma = torch.distributions.MultivariateNormal(
-                loc=torch.zeros_like(z), covariance_matrix=G
-            ).sample()
-            beta_sqrt_old = self.beta_zero_sqrt
+            gamma = torch.randn_like(z, device=self.device)
             rho = gamma / self.beta_zero_sqrt
+
+            rho = (L @ rho.unsqueeze(-1)).squeeze(-1) # sample from the multivariate N(0, G)
+            
+            beta_sqrt_old = self.beta_zero_sqrt
 
             for k in range(leap_nbr):
 
@@ -1173,7 +1224,7 @@ class AdaRHVAE(RHVAE):
 
                 if self.metric == "jacobian":
                     recon_x = self.decode(z)
-                    J_bis = self.jacobian(recon_x, z)
+                    J_bis = self.jacobian_bis(recon_x, z)
                     G = torch.transpose(J_bis, 1, 2) @ J_bis
                     G_log_det = torch.logdet(G)
 
