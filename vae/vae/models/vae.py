@@ -727,7 +727,7 @@ class AdaRHVAE(RHVAE):
 
             # Define a starting metric (can be identity as well)
             def G(z):
-                return (torch.eye(self.latent_dim).unsqueeze(0) * torch.exp(- torch.norm(z.unsqueeze(1), dim=-1) ** 2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
+                return (torch.eye(self.latent_dim, device=self.device).unsqueeze(0) * torch.exp(- torch.norm(z.unsqueeze(1), dim=-1) ** 2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
 
             self.G = G
 
@@ -748,7 +748,7 @@ class AdaRHVAE(RHVAE):
         h1 = self.fc1(x.view(-1, self.input_dim))
         h21, h22 = self.metric_fc21(h1), self.metric_fc22(h1)
 
-        L = torch.zeros((x.shape[0], self.latent_dim, self.latent_dim))
+        L = torch.zeros((x.shape[0], self.latent_dim, self.latent_dim)).to(self.device)
         indices = torch.tril_indices(row=self.latent_dim, col=self.latent_dim, offset=-1)
         L[:, indices[0], indices[1]] = h22
 
