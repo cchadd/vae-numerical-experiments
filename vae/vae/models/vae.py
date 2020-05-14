@@ -404,6 +404,7 @@ class HVAE(VAE):
             return -self.log_p_xz(recon_x, x, z).sum()
 
         norm = (torch.solve(rho[:, :, None], G).solution[:, :, 0] * rho).sum()
+
         return -self.log_p_xz(recon_x, x, z).sum() + 0.5 * norm + 0.5 * G_log_det.sum()
 
     def _tempering(self, k):
@@ -764,7 +765,7 @@ class AdaRHVAE(RHVAE):
         self.centroids_tens = torch.cat(self.centroids)
 
         def G(z):
-            return (self.M_tens.unsqueeze(0) * torch.exp(- torch.norm(self.centroids_tens.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
+            return torch.inverse((self.M_tens.unsqueeze(0) * torch.exp(- torch.norm(self.centroids_tens.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device))
             
         self.G = G
         self.L = []
@@ -820,8 +821,7 @@ class AdaRHVAE(RHVAE):
                 self.L.append(L.clone().detach())
                 self.M.append(M.clone().detach())
                 self.centroids.append(mu.clone().detach())
-                G = (M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
-         
+                G = torch.inverse((M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device))
 
 
                 #G # = self.metric_forward(x, z, mu, batch_idx)
@@ -866,7 +866,7 @@ class AdaRHVAE(RHVAE):
 
             elif self.metric == 'TBL':
                 if self.training:
-                    G = (M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
+                    G = torch.inverse((M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device))
                 
                 else:
                     G = self.G(z)
@@ -1566,7 +1566,7 @@ class AdaRHVAE_TIMES(RHVAE):
 
                 if self.metric == "jacobian":
                     recon_x = self.decode(z)
-                    J_bis = self.jacobian(recon_x, z)
+                    J_bis = self.jacobian_bis(recon_x, z)
                     G = torch.transpose(J_bis, 1, 2) @ J_bis
                     G_log_det = torch.logdet(G)
 
