@@ -562,7 +562,7 @@ class RHVAE(HVAE):
 
             # tempering
             beta_sqrt = self._tempering(k)
-            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            rho = (beta_sqrt_old / beta_sqrt) * rho__
             beta_sqrt_old = beta_sqrt
 
         bce = F.binary_cross_entropy(
@@ -879,7 +879,7 @@ class AdaRHVAE(RHVAE):
             rho = rho__
             # tempering steps
             beta_sqrt = self._tempering(k)
-            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            rho = (beta_sqrt_old / beta_sqrt) * rho__
             beta_sqrt_old = beta_sqrt
 
         return recon_x, z, z0, rho, eps0, gamma, mu, log_var, G, G_log_det
@@ -981,7 +981,7 @@ class AdaRHVAE(RHVAE):
 
             # tempering
             beta_sqrt = self._tempering(k)
-            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            rho = (beta_sqrt_old / beta_sqrt) * rho__
             beta_sqrt_old = beta_sqrt
 
         bce = F.binary_cross_entropy(
@@ -1193,7 +1193,7 @@ class AdaRHVAE(RHVAE):
 
                 # tempering steps
                 beta_sqrt = self._tempering(k)
-                rho = (beta_sqrt / beta_sqrt_old) * rho__
+                rho = (beta_sqrt_old / beta_sqrt) * rho__
                 beta_sqrt_old = beta_sqrt
 
         return recon_x
