@@ -108,7 +108,7 @@ class VAE(BaseVAE, nn.Module):
         return self.fc2(x), self.fc22(x)
 
     def __encode_mlp(self, x):
-        h1 = F.softplus(self.fc1(x))
+        h1 = F.relu(self.fc1(x))
         return self.fc21(h1), self.fc22(h1)
 
     def __decode_convnet(self, z):
@@ -120,7 +120,7 @@ class VAE(BaseVAE, nn.Module):
         return x.view(-1, self.input_dim)
 
     def __decode_mlp(self, z):
-        h3 = F.softplus(self.fc3(z))
+        h3 = F.relu(self.fc3(z))
         return torch.sigmoid(self.fc4(h3))
 
     def _sample_gauss(self, mu, std):
@@ -193,16 +193,12 @@ class VAE(BaseVAE, nn.Module):
         # compute densities to recover p(x)
         logpxz = -bce.reshape(sample_size, -1, self.input_dim).sum(dim=2)  # log(p(x|z))
         logpz = self.log_z(Z).reshape(sample_size, -1)  # log(p(z))
-        logqzx = (
-            torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
-            )
-            .log_prob(Z.reshape(sample_size, -1, self.latent_dim))
-            .reshape(sample_size, -1)
-        )  # log(q(z|x))
+        logqzx =  self.normal.log_prob(Eps) - 0.5*log_var.sum(dim=1)
+
         logpx = (logpxz + logpz - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(
             torch.Tensor([sample_size]).to(self.device)
         )
+
         return logpx
 
     def log_p_z_given_x(self, z, recon_x, x, sample_size=10):
@@ -301,7 +297,7 @@ class HVAE(VAE):
         Perform Hamiltonian Importance Sampling
         """
 
-        recon_x, z0, _, mu, log_var = self.vae_forward(x)
+        recon_x, z0, eps0, mu, log_var = self.vae_forward(x)
         gamma = torch.randn_like(z0, device=self.device)
         rho = gamma / self.beta_zero_sqrt
         z = z0
@@ -333,26 +329,22 @@ class HVAE(VAE):
 
             # tempering steps
             beta_sqrt = self._tempering(k)
-            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            rho = (beta_sqrt_old / beta_sqrt) * rho__
             beta_sqrt_old = beta_sqrt
 
-        return recon_x, z, z0, rho, gamma, mu, log_var
+        return recon_x, z, z0, rho, eps0, gamma, mu, log_var
 
-    def loss_function(self, recon_x, x, z0, zK, rhoK, gamma, mu, log_var):
+    def loss_function(self, recon_x, x, z0, zK, rhoK, eps0, gamma, mu, log_var):
 
         logpxz = self.log_p_xz(recon_x, x, zK)  # log p(x, z)
         logrhoK = self.normal.log_prob(rhoK)  # log p(\rho_K)
         logp = logpxz + logrhoK
 
-        logqzx = torch.distributions.MultivariateNormal(
-            loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
-        ).log_prob(
-            z0
-        )  # log(q(z|x))
+        logqzx = self.normal.log_prob(eps0) - 0.5 * log_var.sum(dim=1) # q(z_0|x)
 
-        logrho0 = self.normal.log_prob(gamma)
-        logq = logqzx + logrho0
-        return -(logp - logq).mean()
+        # logrho0 = self.normal.log_prob(gamma)
+        logq = logqzx #+ logrho0 
+        return -(logp - logq).sum()
 
     def log_p_x(self, x, sample_size=10):
         """
@@ -361,7 +353,7 @@ class HVAE(VAE):
         mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
-        Z0 = Z
+
         recon_X = self.decode(Z)
 
         gamma = torch.randn_like(Z, device=self.device)
@@ -374,20 +366,20 @@ class HVAE(VAE):
 
             U = self.hamiltonian(recon_X, X_rep, Z, rho)
             g = grad(U, Z, create_graph=True)[0]
-            rho_ = rho - (self.eps_lf) * g
+            rho_ = rho - (self.eps_lf / 2) * g
 
-            Z = Z + self.eps_lf * rho
+            Z = Z + self.eps_lf * rho_
 
             recon_X = self.decode(Z)
 
-            U = self.hamiltonian(recon_X, X_rep, Z, rho)
+            U = self.hamiltonian(recon_X, X_rep, Z, rho_)
             g = grad(U, Z, create_graph=True)[0]
 
             rho__ = rho_ - (self.eps_lf / 2) * g
 
             # tempering
             beta_sqrt = self._tempering(k)
-            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            rho = (beta_sqrt_old / beta_sqrt) * rho__
             beta_sqrt_old = beta_sqrt
 
         bce = F.binary_cross_entropy(
@@ -401,18 +393,9 @@ class HVAE(VAE):
 
         logrho0 = self.beta_zero_sqrt * self.normal.log_prob(rho0).reshape(sample_size, -1)  # log(p(rho0))
         logrho = self.normal.log_prob(rho).reshape(sample_size, -1)  # log(p(rho))
+        logqzx =  self.normal.log_prob(Eps) - 0.5*log_var.sum(dim=1)
 
-        logqzx = (
-            torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
-            )
-            .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
-            .reshape(sample_size, -1)
-        )  # log(q(z|x))
-
-        logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(
-            dim=0
-        ) - torch.log(torch.Tensor([sample_size]).to(self.device))
+        logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(torch.Tensor([sample_size]).to(self.device))
         return logpx
 
     def hamiltonian(self, recon_x, x, z, rho, G=None, G_log_det=None):
@@ -427,7 +410,7 @@ class HVAE(VAE):
         """Perform tempering step"""
 
         beta_k = (
-            1 - (1 / self.beta_zero_sqrt) * k / self.n_lf ** 2
+            1 - (1 / self.beta_zero_sqrt) * (k / self.n_lf) ** 2
         ) + 1 / self.beta_zero_sqrt
 
         return 1 / beta_k
@@ -456,7 +439,7 @@ class RHVAE(HVAE):
         Perform Riemann Hamiltionian Importance Sampling
         """
 
-        recon_x, z0, _, mu, log_var = self.vae_forward(x)
+        recon_x, z0, eps0, mu, log_var = self.vae_forward(x)
 
         z = z0
 
@@ -464,36 +447,75 @@ class RHVAE(HVAE):
         G = torch.diag_embed((-log_var).exp())
         G_log_det = torch.logdet(G)
 
-        # gamma = torch.randn_like(z0, device=self.device)
-        # rho = gamma / self.beta_zero_sqrt
-
-        # Sample gamma
-        gamma = torch.distributions.MultivariateNormal(
-            loc=torch.zeros_like(z), covariance_matrix=G
-        ).sample()
-
+        gamma = torch.randn_like(z0, device=self.device)
         rho = gamma / self.beta_zero_sqrt
 
+        rho = (G ** 0.5 @ rho.unsqueeze(-1)).squeeze(-1) # sample from the multivariate N(0, G)
+ 
         beta_sqrt_old = self.beta_zero_sqrt
 
         for k in range(self.n_lf):
 
             # Perform leapfrog steps
             rho_ = self.leap_step_1(recon_x, x, z, rho, G, G_log_det)
+            
+            if (rho_!= rho_).sum() > 0:
+                print(recon_x, x, z, rho, G, G_log_det)
+
             z = self.leap_step_2(recon_x, x, z, rho_, G, G_log_det)
+
+            if (z != z).sum() > 0:
+                print(recon_x, x, z, rho, G, G_log_det)
 
             recon_x = self.decode(z)
 
             rho__ = self.leap_step_3(recon_x, x, z, rho_, G, G_log_det)
 
-            rho = rho__
+            if (rho__ != rho__).sum() > 0:
+                print(recon_x, x, z, rho, G, G_log_det)
 
             # tempering steps
             beta_sqrt = self._tempering(k)
-            rho = (beta_sqrt / beta_sqrt_old) * rho__
+            rho = (beta_sqrt_old / beta_sqrt) * rho__
             beta_sqrt_old = beta_sqrt
 
-        return recon_x, z, z0, rho, gamma, mu, log_var
+        return recon_x, z, z0, rho, eps0, gamma, mu, log_var, G
+
+    def loss_function(self, recon_x, x, z0, zK, rhoK, eps0, gamma, mu, log_var, G):
+#       
+        logpxz = self.log_p_xz(recon_x, x, zK)  # log p(x, z)
+        logrhoK = -0.5 * (torch.transpose(rhoK.unsqueeze(-1), 1, 2) @ torch.diag_embed((log_var).exp()) @ rhoK.unsqueeze(-1)).squeeze().squeeze() + 0.5 * log_var.sum(dim=1)
+
+        logp = logpxz + logrhoK
+
+        logqzx = self.normal.log_prob(eps0) - 0.5 * log_var.sum(dim=1) # log(q(z_0|x))
+
+        # logrho0 = torch.distributions.MultivariateNormal(
+        #     loc=torch.zeros_like(gamma), covariance_matrix=torch.exp(-log_var)
+        # ).log_prob(gamma)
+
+        
+        # logrho0 = - 0.5 * (torch.transpose(gamma.unsqueeze(-1), 1, 2) @ torch.diag_embed((log_var).exp()) @ gamma.unsqueeze(-1)).squeeze().squeeze() - 0.5 * log_var.sum(dim=1)
+        logq = logqzx #+ logrho0
+
+
+        return -(logp - logq).sum()
+
+    #def loss_function(self, recon_x, x, z0, zK, rhoK, gamma, mu, log_var, G=None):
+#
+    #    logpxz = self.log_p_xz(recon_x, x, zK)  # log p(x, z)
+    #    logrhoK = self.normal.log_prob(rhoK)  # log p(\rho_K)
+    #    logp = logpxz + logrhoK
+#
+    #    logqzx = torch.distributions.MultivariateNormal(
+    #        loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
+    #    ).log_prob(
+    #        z0
+    #    )  # log(q(z|x))
+#
+    #    logrho0 = self.normal.log_prob(gamma)
+    #    logq = logqzx + logrho0
+    #    return -(logp - logq).sum()
 
     def log_p_x(self, x, sample_size=10):
         """
@@ -501,8 +523,10 @@ class RHVAE(HVAE):
         """
 
         mu, log_var = self.encode(x.view(-1, self.input_dim))
+
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
+
         Z0 = Z
 
         G = torch.diag_embed((-log_var).exp())
@@ -512,19 +536,24 @@ class RHVAE(HVAE):
 
         recon_X = self.decode(Z)
 
-        gamma = torch.distributions.MultivariateNormal(
-            loc=torch.zeros_like(Z), covariance_matrix=G_rep
-        ).sample()
-
+        gamma = torch.randn_like(Z0, device=self.device)
         rho = gamma / self.beta_zero_sqrt
+
+        rho = (G_rep ** 0.5 @ rho.unsqueeze(-1)).squeeze(-1) # sample from the multivariate N(0, G)
+
         rho0 = rho
 
         beta_sqrt_old = self.beta_zero_sqrt
+
         X_rep = x.repeat(sample_size, 1, 1, 1)
 
         for k in range(self.n_lf):
 
             rho_ = self.leap_step_1(recon_X, X_rep, Z, rho, G_rep, G_log_det_rep)
+
+            if (rho_!= rho_).sum() > 0:
+                print(recon_X, X_rep, Z, rho, G_rep, G_log_det_rep)
+
             Z = self.leap_step_2(recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep)
 
             recon_X = self.decode(Z)
@@ -560,14 +589,7 @@ class RHVAE(HVAE):
             .log_prob(rho)
             .reshape(sample_size, -1)
         )  # log(p(rho0))
-
-        logqzx = (
-            torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
-            )
-            .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
-            .reshape(sample_size, -1)
-        )  # log(q(z|x))
+        logqzx =  self.normal.log_prob(Eps) - 0.5*log_var.sum(dim=1)
 
         logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(
             dim=0
@@ -611,11 +633,9 @@ class RHVAE(HVAE):
 
                 rho__ = self.leap_step_3(recon_x, x, z, rho_, G, G_log_det)
 
-                rho = rho__
-
                 # tempering steps
                 beta_sqrt = self._tempering(k)
-                rho = (beta_sqrt / beta_sqrt_old) * rho__
+                rho = (beta_sqrt_old / beta_sqrt) * rho__
                 beta_sqrt_old = beta_sqrt
 
         return recon_x
@@ -625,8 +645,8 @@ class RHVAE(HVAE):
         Resolves eq.16 from Girolami using fixed point iterations
         """
 
-        def f_(rho):
-            H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
+        def f_(rho_):
+            H = self.hamiltonian(recon_x, x, z, rho_, G, G_log_det)
             gz = grad(H, z, retain_graph=True)[0]
             return rho - 0.5 * self.eps_lf * gz
 
@@ -642,8 +662,8 @@ class RHVAE(HVAE):
         H0 = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
         grho_0 = grad(H0, rho)[0]
 
-        def f_(z):
-            H = self.hamiltonian(recon_x, x, z, rho, G, G_log_det)
+        def f_(z_):
+            H = self.hamiltonian(recon_x, x, z_, rho, G, G_log_det)
             grho = grad(H, rho, retain_graph=True)[0]
             return z + 0.5 * self.eps_lf * (grho_0 + grho)
 
@@ -667,30 +687,96 @@ class AdaRHVAE(RHVAE):
         metric="sigma",
         tempering="fixed",
         model_type="mlp",
+        T=1,
         input_dim=784,
         latent_dim=2,
     ):
 
-        HVAE.__init__(
+        RHVAE.__init__(
             self, n_lf, eps_lf, beta_zero, tempering, model_type, input_dim, latent_dim
         )
-
-        self.name = "RHVAE"
 
         assert metric in [
             "sigma",
             "jacobian",
             "fisher",
+            "TBL"
         ], f"The metric {metric} is not handled by the RHVAE"
 
         self.metric = metric
+
+        if self.metric == 'TBL':
+
+            # Defines the Neural net to compute the metric:
+            # G(z) = \sum_{obs} U_i^\{\top} U_i exp( - || mu_i - z ||**2 / T ** 2) + I_D 
+
+            # Diagonal
+            self.metric_fc21 = nn.Linear(400, self.latent_dim)
+
+            # matrix
+            k = int(self.latent_dim * (self.latent_dim - 1) / 2)
+            self.metric_fc22 = nn.Linear(400, k)
+
+            self.T = nn.Parameter(torch.Tensor([T]))
+
+            # This is used to store the matrices and centroids throughout trainning for further use in metric update (L is the cholesky decomposition of M)
+            self.L = []
+            self.M = []
+            self.centroids = []
+
+            # Define a starting metric (can be identity as well)
+            def G(z):
+                return (torch.eye(self.latent_dim).unsqueeze(0) * torch.exp(- torch.norm(z.unsqueeze(1), dim=-1) ** 2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
+
+            self.G = G
+
+        self.name = "AdaRHVAE"
+
+
+    def metric_forward(self, x):
+        """
+        This function returns the metric computed with respect to the points in the batch.
+        It outputs a 
+
+        Inputs:
+        -------
+
+        x (Tensor, [Batch_size, input_size]): The inputs points
+        """
+
+        h1 = self.fc1(x.view(-1, self.input_dim))
+        h21, h22 = self.metric_fc21(h1), self.metric_fc22(h1)
+
+        L = torch.zeros((x.shape[0], self.latent_dim, self.latent_dim))
+        indices = torch.tril_indices(row=self.latent_dim, col=self.latent_dim, offset=-1)
+        L[:, indices[0], indices[1]] = h22
+
+        L = L + torch.diag_embed(h21)
+
+        return L, L @ torch.transpose(L, 1, 2)
+
+    def update_metric(self):
+        """
+        As soon as the model has seen all the data points we update the metric function using m(x) as centroids
+        """
+        self.L_tens = torch.cat(self.L)
+        self.M_tens = torch.cat(self.M)
+        self.centroids_tens = torch.cat(self.centroids)
+
+        def G(z):
+            return (self.M_tens.unsqueeze(0) * torch.exp(- torch.norm(self.centroids_tens.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
+            
+        self.G = G
+        self.L = []
+        self.M = []
+        self.centroids = []
 
     def forward(self, x):
         """
         Perform Riemann Hamiltionian Importance Sampling
         """
 
-        recon_x, z0, _, mu, log_var = self.vae_forward(x)
+        recon_x, z0, eps0, mu, log_var = self.vae_forward(x)
 
         z = z0
 
@@ -699,21 +785,59 @@ class AdaRHVAE(RHVAE):
             J_bis = self.jacobian_bis(recon_x, z)
             G = torch.transpose(J_bis, 1, 2) @ J_bis #+ 1e-7 * torch.eye(self.latent_dim).to(self.device)
             G_log_det = torch.logdet(G)
+            L = torch.cholesky(G)
 
         elif self.metric == "fisher":
             G = self.fisher(recon_x, z, n_samples=100)
+            L = torch.cholesky(G)
             G_log_det = torch.logdet(G)
+            L = torch.cholesky(G)
 
         elif self.metric == "sigma":
             # Define a metric G(x) = \Sigma^{-1}(x)
             G = torch.diag_embed((-log_var).exp())
             G_log_det = torch.logdet(G)
+            L = G ** 0.5
 
-        gamma = torch.distributions.MultivariateNormal(
-            loc=torch.zeros_like(z), covariance_matrix=G
-        ).sample()
+        elif self.metric == 'TBL':
 
+            if self.training:
+                
+                #bs = x.shape[0]
+                #h1 = self.fc1(x.view(-1, self.input_dim))
+                #h21, h22 = self.metric_fc21(h1), self.metric_fc22(h1)
+#
+                #M = torch.zeros((x.shape[0], self.latent_dim, self.latent_dim))
+                #indices = torch.tril_indices(row=self.latent_dim, col=self.latent_dim, offset=-1)
+                #M[:, indices[1], indices[0]] = h22
+#
+                #M = M + torch.diag_embed(h21)
+
+                # print(self.metric_fc21.weight, self.metric_fc22.weight)
+
+
+                L, M = self.metric_forward(x)
+                self.L.append(L.clone().detach())
+                self.M.append(M.clone().detach())
+                self.centroids.append(mu.clone().detach())
+                G = (M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
+         
+
+
+                #G # = self.metric_forward(x, z, mu, batch_idx)
+                # self.update_metric()
+
+            else:
+                G = self.G(z)
+                L = torch.cholesky(G)
+
+            G_log_det = torch.logdet(G)
+
+       
+        gamma = torch.randn_like(z0, device=self.device)
         rho = gamma / self.beta_zero_sqrt
+
+        rho = (L @ rho.unsqueeze(-1)).squeeze(-1) # sample from the multivariate N(0, G)
 
         beta_sqrt_old = self.beta_zero_sqrt
 
@@ -740,6 +864,16 @@ class AdaRHVAE(RHVAE):
                 G = self.fisher(recon_x, z, n_samples=100)
                 G_log_det = torch.logdet(G)
 
+            elif self.metric == 'TBL':
+                if self.training:
+                    G = (M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
+                
+                else:
+                    G = self.G(z)
+                
+                G_log_det = torch.logdet(G)
+#
+
             rho__ = self.leap_step_3(recon_x, x, z, rho_, G, G_log_det)
 
             rho = rho__
@@ -748,7 +882,27 @@ class AdaRHVAE(RHVAE):
             rho = (beta_sqrt / beta_sqrt_old) * rho__
             beta_sqrt_old = beta_sqrt
 
-        return recon_x, z, z0, rho, gamma, mu, log_var
+        return recon_x, z, z0, rho, eps0, gamma, mu, log_var, G, G_log_det
+
+    def loss_function(self, recon_x, x, z0, zK, rhoK, eps0, gamma, mu, log_var, G, G_log_det):
+#       
+        logpxz = self.log_p_xz(recon_x, x, zK)  # log p(x, z)
+        logrhoK = -0.5 * (torch.transpose(rhoK.unsqueeze(-1), 1, 2) @ torch.inverse(G) @ rhoK.unsqueeze(-1)).squeeze().squeeze() - 0.5 * G_log_det
+
+        logp = logpxz + logrhoK
+
+        logqzx = self.normal.log_prob(eps0) - 0.5 * log_var.sum(dim=1) # log(q(z_0|x))
+
+        # logrho0 = torch.distributions.MultivariateNormal(
+        #     loc=torch.zeros_like(gamma), covariance_matrix=torch.exp(-log_var)
+        # ).log_prob(gamma)
+
+        
+        # logrho0 = - 0.5 * (torch.transpose(gamma.unsqueeze(-1), 1, 2) @ torch.diag_embed((log_var).exp()) @ gamma.unsqueeze(-1)).squeeze().squeeze() - 0.5 * log_var.sum(dim=1)
+        logq = logqzx #+ logrho0
+
+
+        return -(logp - logq).sum()
 
     def log_p_x(self, x, sample_size=10):
         """
@@ -758,6 +912,7 @@ class AdaRHVAE(RHVAE):
         mu, log_var = self.encode(x.view(-1, self.input_dim))
         Eps = torch.randn(sample_size, x.size()[0], self.latent_dim, device=self.device)
         Z = (mu + Eps * torch.exp(0.5 * log_var)).reshape(-1, self.latent_dim)
+
         Z0 = Z
 
         recon_X = self.decode(Z)
@@ -769,22 +924,30 @@ class AdaRHVAE(RHVAE):
             G_rep = torch.transpose(J_rep, 1, 2) @ J_rep #+ 1e-7 * torch.eye(self.latent_dim).to(self.device)
             G_log_det_rep = torch.logdet(G_rep)
             G_rep0 = G_rep
+            L_rep = torch.cholesky(G_rep)
 
         elif self.metric == "sigma":
             G_rep = torch.diag_embed((-log_var).exp())
             G_log_det_rep = torch.logdet(G_rep)
             G_rep0 = G_rep
+            L_rep = torch.cholesky(G_rep)
 
         elif self.metric == "fisher":
             G_rep = self.fisher(recon_X, Z, n_samples=100)
             G_log_det_rep = torch.logdet(G_rep)
             G_rep0 = G_rep
+            L_rep = torch.cholesky(G_rep)
 
-        gamma = torch.distributions.MultivariateNormal(
-            loc=torch.zeros_like(Z), covariance_matrix=G_rep
-        ).sample()
+        elif self.metric == 'TBL':
+            G_rep = self.G(Z)
+            G_log_det_rep = torch.logdet(G_rep)
+            G_rep0 = G_rep
+            L_rep = torch.cholesky(G_rep)
 
+        gamma = torch.randn_like(Z0, device=self.device)
         rho = gamma / self.beta_zero_sqrt
+
+        rho = (L_rep @ rho.unsqueeze(-1)).squeeze(-1) # sample from the multivariate N(0, G)
 
         rho0 = rho
 
@@ -808,6 +971,10 @@ class AdaRHVAE(RHVAE):
 
             elif self.metric == "fisher":
                 G_rep = self.fisher(recon_X, Z, n_samples=100)
+                G_log_det_rep = torch.logdet(G_rep)
+
+            elif self.metric == 'TBL':
+                G_rep = self.G(Z)
                 G_log_det_rep = torch.logdet(G_rep)
 
             rho__ = self.leap_step_3(recon_X, X_rep, Z, rho_, G_rep, G_log_det_rep)
@@ -841,13 +1008,7 @@ class AdaRHVAE(RHVAE):
             .log_prob(rho)
             .reshape(sample_size, -1)
         )  # log(p(rho0))
-        logqzx = (
-            torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
-            )
-            .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
-            .reshape(sample_size, -1)
-        )  # log(q(z|x))
+        logqzx =  self.normal.log_prob(Eps) - 0.5*log_var.sum(dim=1)
 
         logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(
             dim=0
@@ -955,6 +1116,16 @@ class AdaRHVAE(RHVAE):
         return jac 
 
     def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
+        """
+        Sample an image
+
+        Inputs:
+        -------
+        z (Tensor): Latent variables we want to decode. In None, z will be drawn from N(0, I)
+        n_samples (int): The number of samples we want
+        leap_step (Bool): If True, the variable will be transformed following Hamiltonian scheme
+        leap_nbr (int): If leap_step is True, the model will perform leap_nbr number of leapfrog steps
+        """
         if z is None:
             z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
 
@@ -978,6 +1149,10 @@ class AdaRHVAE(RHVAE):
             _, log_var = self.encode(x)
             # Define a metric G(x) = \Sigma^{-1}(x)
             G = torch.diag_embed((-log_var).exp())
+            G_log_det = torch.logdet(G)
+
+        elif self.metric == 'TBL':
+            G = self.G(z)
             G_log_det = torch.logdet(G)
 
         if leap_step:
@@ -1006,6 +1181,10 @@ class AdaRHVAE(RHVAE):
                     recon_x = self.decode(z)
                     x = torch.distributions.Bernoulli(probs=recon_x).sample()
                     G = self.fisher(recon_x, z, n_samples=100)
+                    G_log_det = torch.logdet(G)
+
+                elif self.metric == 'TBL':
+                    G = self.G(z)
                     G_log_det = torch.logdet(G)
 
                 rho__ = self.leap_step_3(recon_x, x, z, rho_, G, G_log_det)
@@ -1042,7 +1221,7 @@ class AdaRHVAE_TIMES(RHVAE):
         assert metric in [
             "sigma",
             "jacobian",
-            "fisher",
+            "fisher"
         ], f"The metric {metric} is not handled by the RHVAE"
 
         self.encoder_only = True
@@ -1226,13 +1405,7 @@ class AdaRHVAE_TIMES(RHVAE):
             .log_prob(rho)
             .reshape(sample_size, -1)
         )  # log(p(rho0))
-        logqzx = (
-            torch.distributions.MultivariateNormal(
-                loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
-            )
-            .log_prob(Z0.reshape(sample_size, -1, self.latent_dim))
-            .reshape(sample_size, -1)
-        )  # log(q(z|x))
+        logqzx =  self.normal.log_prob(Eps) - 0.5*log_var.sum(dim=1)
 
         logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(
             dim=0
@@ -1340,6 +1513,16 @@ class AdaRHVAE_TIMES(RHVAE):
         return jac 
 
     def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
+        """
+        Sample an image
+
+        Inputs:
+        -------
+        z (Tensor): Latent variables we want to decode. In None, z will be drawn from N(0, I)
+        n_samples (int): The number of samples we want
+        leap_step (Bool): If True, the variable will be transformed following Hamiltonian scheme
+        leap_nbr (int): If leap_step is True, the model will perform leap_nbr number of leapfrog steps
+        """
         if z is None:
             z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
 

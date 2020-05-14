@@ -16,6 +16,7 @@ class ModelTrainer(BaseTrainer):
         lr=1e-3,
         n_epochs=15,
         seed=1,
+        metric=None,
         record_metrics=True,
         only_train=False,
         verbose=True,
@@ -60,7 +61,7 @@ class ModelTrainer(BaseTrainer):
             "VAE",
             "HVAE",
             "RHVAE",
-            "GEO_VAE",
+            "AdaRHVAE",
             "Two times"
         ], f"{model.name} is not handled by the trainer"
 
@@ -77,9 +78,13 @@ class ModelTrainer(BaseTrainer):
 
     def train(self):
         for epoch in range(self.n_epochs):
+
             self.__train_epoch(epoch)
             if not self.only_train:
                 self.__test_epoch(epoch)
+
+            #if self.model.name == 'RHVAE' and self.model.metric == 'TBL':
+            #    self.model.update_metric()
 
     def __train_epoch(self, epoch):
         self.model.train()
@@ -103,12 +108,25 @@ class ModelTrainer(BaseTrainer):
                     recon_batch, z, _, mu, log_var = self.model(data)
                     loss = self.model.loss_function(recon_batch, data, mu, log_var)
 
-                elif self.model.name == "HVAE" or self.model.name == "RHVAE":
-                    recon_batch, z, z0, rho, gamma, mu, log_var = self.model(data)
+                elif self.model.name == "HVAE":
+                    recon_batch, z, z0, rho, eps0, gamma, mu, log_var = self.model(data)
                     loss = self.model.loss_function(
-                        recon_batch, data, z0, z, rho, gamma, mu, log_var
+                        recon_batch, data, z0, z, rho, eps0, gamma, mu, log_var
                     )
-                    # print(loss)
+
+                elif self.model.name == "RHVAE":
+                    recon_batch, z, z0, rho, eps0, gamma, mu, log_var, G = self.model(data)
+                    loss = self.model.loss_function(
+                        recon_batch, data, z0, z, rho, eps0, gamma, mu, log_var, G
+                    )
+
+                elif self.model.name == "AdaRHVAE":
+                    recon_batch, z, z0, rho, eps0, gamma, mu, log_var, G, G_log_det = self.model(data)
+
+                    loss = self.model.loss_function(
+                        recon_batch, data, z0, z, eps0, rho, gamma, mu, log_var, G, G_log_det
+                    )
+
 
                 elif self.model.name == 'Two times':
                     if epoch < int(self.n_epochs / 2):
@@ -128,16 +146,15 @@ class ModelTrainer(BaseTrainer):
 
                 if self.model.name == "VAE":
                     # if self.n_epochs < self.n_epochs / 2:
-                    recon_batch, z, _, mu, log_var = self.model(data, ensure_geo=False)
+                    recon_batch, z, _, mu, log_var = self.model(data)
 
                     # else:
                     #    recon_batch, z, _, mu, log_var = self.model(data, ensure_geo=False)
 
                     loss = self.model.loss_function(recon_batch, data, mu, log_var)
 
-            loss.backward()
-            train_loss += loss.item()
-            self.optimizer.step()
+
+            train_loss += loss
 
             if self.record_metrics:
                 self.__get_model_metrics(
@@ -151,15 +168,23 @@ class ModelTrainer(BaseTrainer):
                     mode="train",
                 )
 
-            self.losses["train_loss"][epoch] += train_loss / len(self.train_loader.dataset)
+        if self.model.name == "AdaRHVAE":
+                self.model.update_metric()
+
+        # Average loss over batches
+        train_loss /= len(self.train_loader.batch_sampler)
+
+        train_loss.backward()
+        self.optimizer.step()
+
+        self.losses["train_loss"][epoch] = train_loss
 
         if self.verbose:
-
             if self.record_metrics:
                 print(
                     "====> Epoch: {} Average loss: {:.4f} \tLikelihood: {:.6f} \t KL prior: {:.4f}".format(
                         epoch,
-                        train_loss / len(self.train_loader.dataset),
+                        train_loss,
                         self.train_metrics["log_p_x"][epoch],
                         self.train_metrics["kl_prior"][epoch],
                     )
@@ -169,7 +194,7 @@ class ModelTrainer(BaseTrainer):
                 print(
                     "====> Epoch: {} Average loss: {:.4f}".format(
                         epoch,
-                        train_loss / len(self.train_loader.dataset)
+                        train_loss
                     )
                 )
 
@@ -192,16 +217,30 @@ class ModelTrainer(BaseTrainer):
 
                 if self.model.name == "VAE":
                     recon, z, _, mu, log_var = self.model(data)
-                    # sum up batch loss
-                    test_loss += self.model.loss_function(
+
+                    loss = self.model.loss_function(
                         recon, data, mu, log_var
                     ).item()
 
-                elif self.model.name == "HVAE" or self.model.name == "RHVAE":
-                    recon, z, z0, rho, gamma, mu, log_var = self.model(data)
-                    # sum up batch loss
-                    test_loss += self.model.loss_function(
-                        recon, data, z0, z, rho, gamma, mu, log_var
+                elif self.model.name == "HVAE":
+                    recon, z, z0, rho, eps0, gamma, mu, log_var = self.model(data)
+
+                    loss = self.model.loss_function(
+                        recon, data, z0, z, rho, eps0, gamma, mu, log_var
+                    ).item()
+
+                elif self.model.name == "RHVAE":
+                    recon, z, z0, rho, eps0, gamma, mu, log_var, G = self.model(data)
+
+                    loss = self.model.loss_function(
+                        recon, data, z0, z, rho, eps0, gamma, mu, log_var, G
+                    ).item()
+
+                elif self.model.name == "AdaRHVAE":
+                    recon, z, z0, rho, eps0, gamma, mu, log_var, G, G_log_det = self.model(data)
+
+                    loss = self.model.loss_function(
+                        recon, data, z0, z, rho, eps0, gamma, mu, log_var, G, G_log_det
                     ).item()
 
             elif self.model.archi == "Gauss":
@@ -210,18 +249,20 @@ class ModelTrainer(BaseTrainer):
 
                     recon, z, _, mu, log_var = self.model(data)
 
-                    # sum up batch loss
-                    test_loss += self.model.loss_function(
+                    loss = self.model.loss_function(
                         recon, data, mu, log_var
                     ).item()
+
+            test_loss += loss
 
             if self.record_metrics:
                 self.__get_model_metrics(
                     epoch, recon, data, z, mu, log_var, sample_size=16, mode="test"
                 )
 
-        test_loss /= len(self.test_loader.dataset)
-        self.losses["test_loss"][epoch] += test_loss
+        test_loss /= len(self.test_loader.batch_sampler)
+
+        self.losses["test_loss"][epoch] = test_loss
 
         if self.verbose:
             if self.record_metrics:
@@ -252,12 +293,12 @@ class ModelTrainer(BaseTrainer):
 
                 if mode == "train":
                     self.train_metrics[key][epoch] += (
-                        metrics[key].sum().item()  / len(self.train_loader.batch_sampler)
+                        metrics[key].sum().item() / len(self.train_loader.batch_sampler)
                     )
 
                 elif mode == "test":
                     self.test_metrics[key][epoch] += (
-                        metrics[key].sum().item()  / len(self.test_loader.batch_sampler)
+                        metrics[key].sum().item() / len(self.test_loader.batch_sampler)
                     )
 
             except KeyError:
