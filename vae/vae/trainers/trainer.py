@@ -168,7 +168,7 @@ class ModelTrainer(BaseTrainer):
                     mode="train",
                 )
 
-        if self.model.name == "AdaRHVAE":
+        if self.model.name == "AdaRHVAE" and self.model.metric == 'TBL':
                 self.model.update_metric()
 
         # Average loss over batches
