@@ -398,7 +398,7 @@ class HVAE(VAE):
         logpx = (logpxz + logpz + logrho - logrho0 - logqzx).logsumexp(dim=0).mean(dim=0) - torch.log(torch.Tensor([sample_size]).to(self.device))
         return logpx
 
-    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
+    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10, record_path=False):
         if z is None:
             z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
 
@@ -408,6 +408,13 @@ class HVAE(VAE):
         z.requires_grad_(True)
         recon_x = self.decode(z)
         x = torch.distributions.Bernoulli(probs=recon_x).sample()
+
+        Z_i = []
+        Z_i.append(z)
+
+        gen_x = []
+        gen_x.append(recon_x)
+
 
         if leap_step:
 
@@ -441,7 +448,11 @@ class HVAE(VAE):
                 rho = (beta_sqrt_old / beta_sqrt) * rho__
                 beta_sqrt_old = beta_sqrt
 
-        return recon_x
+                if record_path:
+                    Z_i.append(z)
+                    gen_x.append(recon_x)
+
+        return recon_x, torch.cat(Z_i), torch.cat(gen_x)
 
 
     def hamiltonian(self, recon_x, x, z, rho, G=None, G_log_det=None):
@@ -644,7 +655,7 @@ class RHVAE(HVAE):
 
         return logpx
 
-    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
+    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10, record_path=False):
         if z is None:
             z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
 
@@ -654,6 +665,12 @@ class RHVAE(HVAE):
         z.requires_grad_(True)
         recon_x = self.decode(z)
         x = torch.distributions.Bernoulli(probs=recon_x).sample()
+
+        Z_i = []
+        Z_i.append(z)
+
+        gen_x = []
+        gen_x.append(recon_x)
 
         _, log_var = self.encode(x)
 
@@ -685,7 +702,12 @@ class RHVAE(HVAE):
                 rho = (beta_sqrt_old / beta_sqrt) * rho__
                 beta_sqrt_old = beta_sqrt
 
-        return recon_x
+                if record_path:
+                    Z_i.append(z)
+                    gen_x.append(recon_x)
+
+        return recon_x, torch.cat(Z_i), torch.cat(gen_x)
+
 
     def leap_step_1(self, recon_x, x, z, rho, G, G_log_det, steps=3):
         """
@@ -757,6 +779,8 @@ class AdaRHVAE(RHVAE):
             # Defines the Neural net to compute the metric:
             # G(z) = \sum_{obs} U_i^\{\top} U_i exp( - || mu_i - z ||**2 / T ** 2) + I_D 
 
+            self.metric_fc1 = nn.Linear(self.input_dim, 400)
+
             # Diagonal
             self.metric_fc21 = nn.Linear(400, self.latent_dim)
 
@@ -791,15 +815,15 @@ class AdaRHVAE(RHVAE):
         x (Tensor, [Batch_size, input_size]): The inputs points
         """
 
-        h1 = self.fc1(x.view(-1, self.input_dim))
-        h21, h22 = self.metric_fc21(h1), self.metric_fc22(h1)
+        h1 = F.relu(self.fc1(x.view(-1, self.input_dim)))
+        h21, h22 = self.metric_fc21(h1), F.tanh(self.metric_fc22(h1))
 
         L = torch.zeros((x.shape[0], self.latent_dim, self.latent_dim)).to(self.device)
         indices = torch.tril_indices(row=self.latent_dim, col=self.latent_dim, offset=-1)
         L[:, indices[0], indices[1]] = h22
-
+        #print(h22)
         L = L + torch.diag_embed(h21)
-
+        #print(L @ torch.transpose(L, 1, 2))
         return L, L @ torch.transpose(L, 1, 2)
 
     def update_metric(self):
@@ -809,10 +833,11 @@ class AdaRHVAE(RHVAE):
         self.L_tens = torch.cat(self.L)
         self.M_tens = torch.cat(self.M)
         self.centroids_tens = torch.cat(self.centroids)
+        #print(self.M_tens)
 
         def G(z):
             return torch.inverse((self.M_tens.unsqueeze(0) * torch.exp(- torch.norm(self.centroids_tens.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device))
-            
+
         self.G = G
         self.L = []
         self.M = []
@@ -1161,7 +1186,7 @@ class AdaRHVAE(RHVAE):
 
         return jac 
 
-    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10):
+    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10, record_path=False):
         """
         Sample an image
 
@@ -1181,6 +1206,12 @@ class AdaRHVAE(RHVAE):
         z.requires_grad_(True)
         recon_x = self.decode(z)
         x = torch.distributions.Bernoulli(probs=recon_x).sample()
+
+        Z_i = []
+        Z_i.append(z)
+
+        gen_x = []
+        gen_x.append(recon_x)
 
         if self.metric == "jacobian":
             J = self.jacobian_bis(recon_x, z)
@@ -1247,7 +1278,11 @@ class AdaRHVAE(RHVAE):
                 rho = (beta_sqrt_old / beta_sqrt) * rho__
                 beta_sqrt_old = beta_sqrt
 
-        return recon_x
+                if record_path:
+                    Z_i.append(z)
+                    gen_x.append(recon_x)
+
+        return recon_x, torch.cat(Z_i), torch.cat(gen_x)
 
 
 class AdaRHVAE_TIMES(RHVAE):

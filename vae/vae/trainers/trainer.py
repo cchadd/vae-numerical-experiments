@@ -126,7 +126,11 @@ class ModelTrainer(BaseTrainer):
                     loss = self.model.loss_function(
                         recon_batch, data, z0, z, eps0, rho, gamma, mu, log_var, G, G_log_det
                     )
-
+                    if loss > 1000000:
+                        print('Loss exceeds 1000000 :')
+                        print('G', G)
+                        print('LogDetG', G)
+                        print('Logvar', log_var)
 
                 elif self.model.name == 'Two times':
                     if epoch < int(self.n_epochs / 2):
@@ -175,6 +179,10 @@ class ModelTrainer(BaseTrainer):
         train_loss /= len(self.train_loader.batch_sampler)
 
         train_loss.backward()
+
+        # Grad clipping
+        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 100)
+                
         self.optimizer.step()
 
         self.losses["train_loss"][epoch] = train_loss
