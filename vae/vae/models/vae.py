@@ -281,7 +281,7 @@ class HVAE(VAE):
         self.n_lf = n_lf
         self.eps_lf = torch.Tensor([eps_lf]).to(self.device)
 
-        assert 0 < beta_zero < 1, "Tempering factor should belong to [0, 1]"
+        assert 0 < beta_zero <= 1, "Tempering factor should belong to [0, 1]"
 
         if tempering == "fixed":
 
