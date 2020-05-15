@@ -436,6 +436,7 @@ class HVAE(VAE):
                 z = z + self.eps_lf * rho_
 
                 recon_x = self.decode(z)
+                x = torch.distributions.Bernoulli(probs=recon_x).sample()
 
                 # 2nd leapfrog step
                 U = -self.log_p_xz(recon_x, x, z).sum()
@@ -694,6 +695,7 @@ class RHVAE(HVAE):
                 z = self.leap_step_2(recon_x, x, z, rho_, G, G_log_det)
 
                 recon_x = self.decode(z)
+                x = torch.distributions.Bernoulli(probs=recon_x).sample()
 
                 rho__ = self.leap_step_3(recon_x, x, z, rho_, G, G_log_det)
 
@@ -1252,15 +1254,15 @@ class AdaRHVAE(RHVAE):
                 z = self.leap_step_2(recon_x, x, z, rho_, G, G_log_det)
 
                 recon_x = self.decode(z)
+                x = torch.distributions.Bernoulli(probs=recon_x).sample()
+
 
                 if self.metric == "jacobian":
-                    recon_x = self.decode(z)
                     J_bis = self.jacobian_bis(recon_x, z)
                     G = torch.transpose(J_bis, 1, 2) @ J_bis
                     G_log_det = torch.logdet(G)
 
                 elif self.metric == "fisher":
-                    recon_x = self.decode(z)
                     x = torch.distributions.Bernoulli(probs=recon_x).sample()
                     G = self.fisher(recon_x, z, n_samples=100)
                     G_log_det = torch.logdet(G)
