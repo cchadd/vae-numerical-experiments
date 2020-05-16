@@ -759,6 +759,7 @@ class AdaRHVAE(RHVAE):
         tempering="fixed",
         model_type="mlp",
         T=1,
+        lbd=1,
         input_dim=784,
         latent_dim=2,
     ):
@@ -791,6 +792,7 @@ class AdaRHVAE(RHVAE):
             self.metric_fc22 = nn.Linear(400, k)
 
             self.T = nn.Parameter(torch.Tensor([T]))
+            self.lbd = nn.Parameter(torch.Tensor([lbd]))
 
             # This is used to store the matrices and centroids throughout trainning for further use in metric update (L is the cholesky decomposition of M)
             self.L = []
@@ -799,7 +801,7 @@ class AdaRHVAE(RHVAE):
 
             # Define a starting metric (can be identity as well)
             def G(z):
-                return (torch.eye(self.latent_dim, device=self.device).unsqueeze(0) * torch.exp(- torch.norm(z.unsqueeze(1), dim=-1) ** 2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device)
+                return (torch.eye(self.latent_dim, device=self.device).unsqueeze(0) * torch.exp(- torch.norm(z.unsqueeze(1), dim=-1) ** 2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + self.lbd * torch.eye(self.latent_dim).to(self.device)
 
             self.G = G
 
@@ -817,8 +819,8 @@ class AdaRHVAE(RHVAE):
         x (Tensor, [Batch_size, input_size]): The inputs points
         """
 
-        h1 = F.relu(self.fc1(x.view(-1, self.input_dim)))
-        h21, h22 = self.metric_fc21(h1), torch.tanh(self.metric_fc22(h1))
+        h1 = torch.relu(self.fc1(x.view(-1, self.input_dim)))
+        h21, h22 = self.metric_fc21(h1), self.metric_fc22(h1)
 
         L = torch.zeros((x.shape[0], self.latent_dim, self.latent_dim)).to(self.device)
         indices = torch.tril_indices(row=self.latent_dim, col=self.latent_dim, offset=-1)
@@ -838,7 +840,7 @@ class AdaRHVAE(RHVAE):
         #print(self.M_tens)
 
         def G(z):
-            return torch.inverse((self.M_tens.unsqueeze(0) * torch.exp(- torch.norm(self.centroids_tens.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device))
+            return torch.inverse((self.M_tens.unsqueeze(0) * torch.exp(- torch.norm(self.centroids_tens.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / (self.T ** 2)).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + self.lbd * torch.eye(self.latent_dim).to(self.device))
 
         self.G = G
         self.L = []
@@ -894,7 +896,7 @@ class AdaRHVAE(RHVAE):
                 self.L.append(L.clone().detach())
                 self.M.append(M.clone().detach())
                 self.centroids.append(mu.clone().detach())
-                G = torch.inverse((M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device))
+                G = torch.inverse((M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / (self.T **2)).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + self.lbd * torch.eye(self.latent_dim).to(self.device))
 
 
                 #G # = self.metric_forward(x, z, mu, batch_idx)
@@ -939,7 +941,7 @@ class AdaRHVAE(RHVAE):
 
             elif self.metric == 'TBL':
                 if self.training:
-                    G = torch.inverse((M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / self.T **2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + torch.eye(self.latent_dim).to(self.device))
+                    G = torch.inverse((M.unsqueeze(0) * torch.exp(- torch.norm(mu.unsqueeze(0) - z.unsqueeze(1), dim=-1) ** 2 / (self.T **2)).unsqueeze(-1).unsqueeze(-1)).sum(dim=1) + self.lbd * torch.eye(self.latent_dim).to(self.device))
                 
                 else:
                     G = self.G(z)
