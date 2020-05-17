@@ -819,14 +819,14 @@ class AdaRHVAE(RHVAE):
         x (Tensor, [Batch_size, input_size]): The inputs points
         """
 
-        h1 = torch.relu(self.fc1(x.view(-1, self.input_dim)))
+        h1 = torch.relu(self.metric_fc1(x.view(-1, self.input_dim)))
         h21, h22 = self.metric_fc21(h1), self.metric_fc22(h1)
 
         L = torch.zeros((x.shape[0], self.latent_dim, self.latent_dim)).to(self.device)
         indices = torch.tril_indices(row=self.latent_dim, col=self.latent_dim, offset=-1)
         L[:, indices[0], indices[1]] = h22
         #print(h22)
-        L = L + torch.diag_embed(h21)
+        L = L + torch.diag_embed(h21.exp())
         #print(L @ torch.transpose(L, 1, 2))
         return L, L @ torch.transpose(L, 1, 2)
 
@@ -976,6 +976,15 @@ class AdaRHVAE(RHVAE):
         # logrho0 = - 0.5 * (torch.transpose(gamma.unsqueeze(-1), 1, 2) @ torch.diag_embed((log_var).exp()) @ gamma.unsqueeze(-1)).squeeze().squeeze() - 0.5 * log_var.sum(dim=1)
         logq = logqzx #+ logrho0
 
+        #if -(logp - logq).sum() > 1000000 or -(logp - logq).sum() < 0:
+        #    print('------------------------------------')
+        #    # print(recon_x.min(dim=0))
+        #    print(logp)
+        #    print(logrhoK)
+        #    print(self.log_p_x_given_z(recon_x, x))
+        #    print(logqzx)
+        #    print(0.5 * log_var.sum(dim=1))
+        #    print('---------------------------------------')
 
         return -(logp - logq).sum()
 
@@ -1190,7 +1199,7 @@ class AdaRHVAE(RHVAE):
 
         return jac 
 
-    def sample_img(self, z=None, n_samples=1, leap_step=True, leap_nbr=10, record_path=False):
+    def sample_img(self, z=None, n_samples=1, leap_step=False, leap_nbr=10, grad_desc=False, grad_step=3, step_size=1e-1, record_path=False):
         """
         Sample an image
 
@@ -1201,6 +1210,8 @@ class AdaRHVAE(RHVAE):
         leap_step (Bool): If True, the variable will be transformed following Hamiltonian scheme
         leap_nbr (int): If leap_step is True, the model will perform leap_nbr number of leapfrog steps
         """
+        # TODO check assert
+
         if z is None:
             z = self.normal.sample(sample_shape=(n_samples,)).to(self.device)
 
@@ -1285,5 +1296,24 @@ class AdaRHVAE(RHVAE):
                 if record_path:
                     Z_i.append(z)
                     gen_x.append(recon_x)
+
+        if grad_desc:
+            
+            for _ in range(grad_step):
+
+                if self.metric == 'TBL':
+                    G = self.G(z)
+                    G_log_det = torch.logdet(G)
+
+                g = grad(G_log_det, z)[0]
+
+                z = z - step_size * g + 1e-1 * torch.randn_like(z).to(self.device)
+
+                recon_x = self.decode(z)
+
+                if record_path:
+                    Z_i.append(z)
+                    gen_x.append(recon_x)
+
 
         return recon_x, torch.cat(Z_i), torch.cat(gen_x)

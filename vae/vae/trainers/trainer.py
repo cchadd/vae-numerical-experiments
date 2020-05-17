@@ -124,13 +124,13 @@ class ModelTrainer(BaseTrainer):
                     recon_batch, z, z0, rho, eps0, gamma, mu, log_var, G, G_log_det = self.model(data)
 
                     loss = self.model.loss_function(
-                        recon_batch, data, z0, z, eps0, rho, gamma, mu, log_var, G, G_log_det
+                        recon_batch, data, z0, z, rho, eps0, gamma, mu, log_var, G, G_log_det
                     )
-                    if loss > 1000000:
-                        print('Loss exceeds 1000000 :')
-                        print('G', G)
-                        print('LogDetG', G)
-                        print('Logvar', log_var)
+                    #if loss > 1000000:
+                    #    print('Loss exceeds 1000000 :')
+                    #    print('G', G)
+                    #    print('LogDetG', G)
+                    #    print('Logvar', log_var)
 
                 elif self.model.name == 'Two times':
                     if epoch < int(self.n_epochs / 2):
@@ -172,9 +172,6 @@ class ModelTrainer(BaseTrainer):
                     mode="train",
                 )
 
-        if self.model.name == "AdaRHVAE" and self.model.metric == 'TBL':
-                self.model.update_metric()
-
         # Average loss over batches
         train_loss /= len(self.train_loader.batch_sampler)
 
@@ -184,6 +181,9 @@ class ModelTrainer(BaseTrainer):
         # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 100)
                 
         self.optimizer.step()
+
+        if self.model.name == "AdaRHVAE" and self.model.metric == 'TBL':
+                self.model.update_metric()
 
         self.losses["train_loss"][epoch] = train_loss
 
