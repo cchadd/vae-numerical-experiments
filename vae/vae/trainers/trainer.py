@@ -88,6 +88,8 @@ class ModelTrainer(BaseTrainer):
             if not self.only_train:
                 self.__test_epoch(epoch)
 
+            self.total_epoch += 1
+
 
     def __train_epoch(self, epoch):
         self.model.train()
