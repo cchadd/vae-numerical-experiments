@@ -91,6 +91,8 @@ class ModelTrainer(BaseTrainer):
 
             self.total_epoch += 1
 
+            if epoch % 50 == 0:
+                print(f'Epoch {epoch} \tLoss: { self.losses["train_loss"][-1]}')
 
     def __train_epoch(self, epoch):
         self.model.train()
