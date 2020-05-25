@@ -190,7 +190,7 @@ class ModelTrainer(BaseTrainer):
                 
         self.optimizer.step()
 
-        if self.model.name == "AdaRHVAE" and self.model.metric == 'TBL':
+        if self.model.name == "adaRHVAE" and self.model.metric == 'TBL':
                 self.model.update_metric()
 
         self.losses["train_loss"].append(train_loss.item())
