@@ -128,7 +128,7 @@ class ModelTrainer(BaseTrainer):
                         recon_batch, data, z0, z, rho, eps0, gamma, mu, log_var, G
                     )
 
-                elif self.model.name == "AdaRHVAE":
+                elif self.model.name == "adaRHVAE":
                     recon_batch, z, z0, rho, eps0, gamma, mu, log_var, G, G_log_det = self.model(data)
 
                     loss = self.model.loss_function(
