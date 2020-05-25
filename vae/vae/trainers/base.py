@@ -14,6 +14,7 @@ class BaseTrainer(ABC):
         self.test_loader = test_loader
         self.test_samples_size = test_loader.dataset.data.shape[0]
         self.train_sample = train_loader.dataset.data.shape[0]
+        self.total_epoch = 0
 
         self.losses = {"train_loss": [], "test_loss": []}
 
