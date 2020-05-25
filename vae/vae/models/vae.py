@@ -805,7 +805,7 @@ class AdaRHVAE(RHVAE):
 
             self.G = G
 
-        self.name = "AdaRHVAE"
+        self.name = "RHVAE"
 
 
     def metric_forward(self, x):
