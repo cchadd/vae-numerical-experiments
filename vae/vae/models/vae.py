@@ -781,12 +781,12 @@ class AdaRHVAE(RHVAE):
 
             # Defines the Neural net to compute the metric:
             # G(z) = \sum_{obs} U_i^\{\top} U_i exp( - || mu_i - z ||**2 / T ** 2) + I_D 
-
+    
             self.metric_fc1 = nn.Linear(self.input_dim, 400)
-
+    
             # Diagonal
             self.metric_fc21 = nn.Linear(400, self.latent_dim)
-
+    
             # matrix
             k = int(self.latent_dim * (self.latent_dim - 1) / 2)
             self.metric_fc22 = nn.Linear(400, k)
@@ -1276,7 +1276,7 @@ class AdaRHVAE(RHVAE):
                     G_log_det = torch.logdet(G)
 
                 elif self.metric == "fisher":
-                    x = torch.distributions.Bernoulli(probs=recon_x).sample()
+                    #x = torch.distributions.Bernoulli(probs=recon_x).sample()
                     G = self.fisher(recon_x, z, n_samples=100)
                     G_log_det = torch.logdet(G)
 
@@ -1307,7 +1307,7 @@ class AdaRHVAE(RHVAE):
 
                 g = grad(G_log_det, z)[0]
 
-                z = z - step_size * g + 1e-1 * torch.randn_like(z).to(self.device)
+                z = z - step_size * g #+ 1e-1 * torch.randn_like(z).to(self.device)
 
                 recon_x = self.decode(z)
 
