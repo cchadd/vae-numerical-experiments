@@ -54,6 +54,7 @@ class ModelTrainer(BaseTrainer):
             "VAE",
             "HVAE",
             "RHVAE",
+            "adaRHVAE"
         ], f"{model.name} is not handled by the trainer"
 
         if optimizer == "adam":
