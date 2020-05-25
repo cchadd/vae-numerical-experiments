@@ -14,12 +14,7 @@ class ModelTrainer(BaseTrainer):
         test_loader,
         optimizer="adam",
         lr=1e-3,
-        n_epochs=15,
-        seed=1,
-        metric=None,
-        record_metrics=True,
-        only_train=False,
-        verbose=True,
+        seed=1
     ):
         """
             The ModelTrainer module
@@ -47,7 +42,7 @@ class ModelTrainer(BaseTrainer):
                 - Verbosity
         """
         BaseTrainer.__init__(
-            self, model, n_epochs, train_loader, test_loader, record_metrics, verbose
+            self, model, train_loader, test_loader
         )
 
         torch.manual_seed(seed)
@@ -55,20 +50,11 @@ class ModelTrainer(BaseTrainer):
         random.seed(seed)
         np.random.seed(seed)
 
-        self.only_train = only_train
-
         assert model.name in [
             "VAE",
             "HVAE",
             "RHVAE",
-            "AdaRHVAE",
-            "Two times"
         ], f"{model.name} is not handled by the trainer"
-
-        assert model.archi in [
-            "Bernoulli",
-            "Gauss",
-        ], f"{model.archi} is not handled by the trainer"
 
         if optimizer == "adam":
             self.optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -76,15 +62,32 @@ class ModelTrainer(BaseTrainer):
         else:
             raise Exception(f"Optimizer {optimizer} is not defined")
 
-    def train(self):
-        for epoch in range(self.n_epochs):
+    def train(self, n_epochs, only_train=False, record_metrics=False, verbose=False):
+
+        self.only_train = only_train
+        self.record_metrics = record_metrics
+        self.verbose = verbose
+
+        if record_metrics:
+            self.metrics = [
+                "log_p_x_given_z",
+                "log_p_z_given_x",
+                "log_p_x",
+                "log_p_z",
+                "lop_p_xz",
+                "kl_prior",
+                "kl_cond",
+            ]
+
+            self.train_metrics = {key: [0] * n_epochs for key in self.metrics}
+            self.test_metrics = {key: [0] * n_epochs for key in self.metrics}
+
+        for epoch in range(n_epochs):
 
             self.__train_epoch(epoch)
             if not self.only_train:
                 self.__test_epoch(epoch)
 
-            #if self.model.name == 'RHVAE' and self.model.metric == 'TBL':
-            #    self.model.update_metric()
 
     def __train_epoch(self, epoch):
         self.model.train()
@@ -185,7 +188,7 @@ class ModelTrainer(BaseTrainer):
         if self.model.name == "AdaRHVAE" and self.model.metric == 'TBL':
                 self.model.update_metric()
 
-        self.losses["train_loss"][epoch] = train_loss
+        self.losses["train_loss"].append(train_loss.item())
 
         if self.verbose:
             if self.record_metrics:
@@ -270,7 +273,7 @@ class ModelTrainer(BaseTrainer):
 
         test_loss /= len(self.test_loader.batch_sampler)
 
-        self.losses["test_loss"][epoch] = test_loss
+        self.losses["test_loss"].append(test_loss)
 
         if self.verbose:
             if self.record_metrics:
