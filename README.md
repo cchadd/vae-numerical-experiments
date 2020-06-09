@@ -13,6 +13,8 @@ pip install -r requirements.txt
 
 ## Running tests
 
+### Experiments description
+
 Four experiments are proposed:
 
 - **metric** (sec 4.2 Metric Computation): This experiment consists in training 3 RHVAE with 3 different fixed metric temperatures equal to 0.6, 0.8 and 1 on 3 classes of 50 samples each of the MNIST dataset. Metrics' magnitude and orientation are then displayed for each temperature. Experiment results are available in `experiments_plots/metric_MM_DD_YYYY_hh_mm_ss` folder.
@@ -22,15 +24,20 @@ Four experiments are proposed:
 
 Unless stated otherwise above, all parameters were set as follows:
 
-- VAE: latent dimension (2), input dimension (784)
-- HVAE: latent dimension (2), input_dim (784), number of leapfrog step (10), leapfrog step size (0.01), initial tempering factor (0.3)
-- RHVAE: latent dimension (2), input_dim (784), number of leapfrog step (10), leapfrog step size (0.1), initial tempering factor (0.3), metric temperature (fixed and equal to 1), metric regularization (fixed and equal to 0.1).
+- **VAE**: latent dimension (2), input dimension (784)
+- **HVAE**: latent dimension (2), input dimension (784), number of leapfrog step (10), leapfrog step size (0.01), initial tempering factor (0.3)
+- **RHVAE**: latent dimension (2), input dimension (784), number of leapfrog step (10), leapfrog step size (0.1), initial tempering factor (0.3), metric temperature (fixed and equal to 1), metric regularization (fixed and equal to 0.1).
 
-To test pretrained models and reproduce the results presented in the paper run:
+### Testing models
+
+To test pre-trained models and reproduce the results presented in the paper run:
 
 ```bash
 ./experiments.sh
 ```
+
+This  will load pre-trained models and perform all the experiments described above.
+
 
 To perform the end-to-end procedure (i.e. with training) run:
 
@@ -38,7 +45,7 @@ To perform the end-to-end procedure (i.e. with training) run:
 ./full_experiments.sh
 ```
 
-This will train the VAE, HVAE and RHVAE models needed with the same parameters as described in the paper and above and store them in the folder `trained_models`. Then, the models are used to run the experiments mentioned above.
+This will train the VAE, HVAE and RHVAE models with the same parameters as described in the paper and above, store them in the folder `trained_models` and run all the experiments described above.
 
 The results for each experiment can be found in `experiments_plots` in a folder with a unique identifier `EXPERIMENT_NAME_MM_DD_YYY_hh_mm_ss`.
 
