@@ -11,34 +11,6 @@ To install requirements run:
 pip install -r requirements.txt
 ```
 
-## Training
-
-To train the model(s) with the same data as presented in the paper, commands should have the following form:
-
-```train
-python train.py -n <model_name> -lt <path_to_train_loader> -lv <path_to_test_loader> (-params <model_parameters>)
-```
-
-All arguments can be found in `train.py`
-Models are trained on CPU.
-
-### Example 1
-
-To train a VAE with default parameters run:
-
-```bash
-python train.py -n vae -lt 'pretrained_models/generation_5/train_generation_5_loader_generation_5_final' -lv 'pretrained_models/generation_5/test_generation_5_loader_generation_5_final' -ne 1000'
-```
-
-#### Example 2
-
-To train a RHVAE model on the data used for the experiment in sec 4.2 with 150 epochs, 10 leapfrog step, a leapfrog step size of 0.01, metric temperature of 1 and regularization factor of 0.1 run:
-
-```bash
-python train.py -n rhvae -lt 'pretrained_models/metric/train_loader_metric_final' -lv 'pretrained_models/metric/test_loader_metric_final' -ne 150 -n_lf 10 -eps_lf 0.01 -temp 1 -reg 0.1-spec 'T1'
-
-```
-
 ## Running tests
 
 Four experiments are proposed:
@@ -74,6 +46,35 @@ The results for each experiment can be found in `experiments_plots` in a folder 
 ## Pre-trained Models
 
 You can find pretrained models, loaders and metrics in `pretrained_models`. These models were used to produce te results presented in the paper.
+
+
+## Training
+
+To train the model(s) with the same data as presented in the paper, commands should have the following form:
+
+```train
+python train.py -n <model_name> -lt <path_to_train_loader> -lv <path_to_test_loader> (-params <model_parameters>)
+```
+
+All arguments can be found in `train.py`
+Models are trained on CPU.
+
+### Example 1
+
+To train a VAE with default parameters run:
+
+```bash
+python train.py -n vae -lt 'pretrained_models/generation_5/train_generation_5_loader_generation_5_final' -lv 'pretrained_models/generation_5/test_generation_5_loader_generation_5_final' -ne 1000'
+```
+
+#### Example 2
+
+To train a RHVAE model on the data used for the experiment in sec 4.2 with 150 epochs, 10 leapfrog step, a leapfrog step size of 0.01, metric temperature of 1 and regularization factor of 0.1 run:
+
+```bash
+python train.py -n rhvae -lt 'pretrained_models/metric/train_loader_metric_final' -lv 'pretrained_models/metric/test_loader_metric_final' -ne 150 -n_lf 10 -eps_lf 0.01 -temp 1 -reg 0.1-spec 'T1'
+
+```
 
 ## Short file description
 
