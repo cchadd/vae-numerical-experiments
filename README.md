@@ -30,6 +30,8 @@ Unless stated otherwise above, all parameters were set as follows:
 
 ### Testing models
 
+#### Using pre-trained models
+
 To test pre-trained models and reproduce the results presented in the paper run:
 
 ```bash
@@ -38,6 +40,7 @@ To test pre-trained models and reproduce the results presented in the paper run:
 
 This  will load pre-trained models and perform all the experiments described above.
 
+#### End-to-end procedure
 
 To perform the end-to-end procedure (i.e. with training) run:
 
